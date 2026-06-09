@@ -18,7 +18,10 @@ Roles: `admin`, `teacher`, `student` — each gets a role-specific dashboard.
 ## 1. Create a Supabase project
 
 1. Sign up at <https://supabase.com> and create a new project (Free tier).
-2. In the SQL editor, run `supabase/migrations/0001_init.sql`, then `supabase/migrations/0002_switch_to_totp.sql` (in order).
+2. In the SQL editor, run the migrations **in order**:
+   - `supabase/migrations/0001_init.sql`
+   - `supabase/migrations/0002_switch_to_totp.sql`
+   - `supabase/migrations/0003_method_choice_and_email_otp.sql`
 3. In **Authentication → Sign In / Providers → Multi-Factor Authentication**, ensure **TOTP** is enabled (it's on by default).
 4. In **Project Settings → API Keys → Legacy anon, service_role API keys**, copy:
    - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`

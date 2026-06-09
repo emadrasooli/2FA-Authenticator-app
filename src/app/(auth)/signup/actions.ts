@@ -74,5 +74,5 @@ export async function signupAction(
     return { error: "Account created — please sign in." };
   }
 
-  redirect("/onboarding/totp");
+  redirect("/onboarding/method");
 }

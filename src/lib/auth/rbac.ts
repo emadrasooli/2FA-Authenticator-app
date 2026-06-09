@@ -2,8 +2,10 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { verifyEmail2faCookie } from "@/lib/auth/email-2fa-session";
 
 export type Role = "admin" | "teacher" | "student";
+export type MfaMethod = "totp" | "email";
 
 export async function getCurrentUser() {
   const supabase = await createClient();
@@ -13,10 +15,16 @@ export async function getCurrentUser() {
   if (!user) return null;
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, full_name, email, role")
+    .select("id, full_name, email, role, mfa_method")
     .eq("id", user.id)
     .maybeSingle();
-  return profile ? { ...profile, role: profile.role as Role } : null;
+  return profile
+    ? {
+        ...profile,
+        role: profile.role as Role,
+        mfa_method: profile.mfa_method as MfaMethod,
+      }
+    : null;
 }
 
 export async function requireUser() {
@@ -27,21 +35,32 @@ export async function requireUser() {
 
 export async function requireFullyAuthed() {
   const supabase = await createClient();
-  const { data: aal } =
-    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  const {
+    data: { user: authUser },
+  } = await supabase.auth.getUser();
+  if (!authUser) redirect("/login");
 
-  if (!aal) redirect("/login");
+  const profile = await getCurrentUser();
+  if (!profile) redirect("/login");
 
-  if (aal.currentLevel === "aal1" && aal.nextLevel === "aal2") {
-    redirect("/login/totp");
+  if (profile.mfa_method === "totp") {
+    const { data: aal } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (!aal) redirect("/login");
+
+    if (aal.currentLevel === "aal1" && aal.nextLevel === "aal2") {
+      redirect("/login/totp");
+    }
+    if (aal.currentLevel === "aal1" && aal.nextLevel === "aal1") {
+      redirect("/onboarding/method");
+    }
+    return profile;
   }
-  if (aal.currentLevel === "aal1" && aal.nextLevel === "aal1") {
-    redirect("/onboarding/totp");
-  }
 
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  return user;
+  // mfa_method === 'email'
+  const passed = await verifyEmail2faCookie(profile.id);
+  if (!passed) redirect("/login/email");
+  return profile;
 }
 
 export async function requireRole(role: Role | Role[]) {

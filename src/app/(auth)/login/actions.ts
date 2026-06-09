@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const LoginSchema = z.object({
   email: z.string().email(),
@@ -30,11 +31,24 @@ export async function loginAction(
   });
   if (error || !data.user) return { error: "Invalid credentials" };
 
+  // Look up the user's chosen 2FA method.
+  const admin = createAdminClient();
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("mfa_method")
+    .eq("id", data.user.id)
+    .maybeSingle();
+
+  if (profile?.mfa_method === "email") {
+    redirect("/login/email");
+  }
+
+  // Default to TOTP for everyone else (including freshly-seeded admins
+  // whose mfa_method is the column default).
   const { data: aal } =
     await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-
   if (aal?.nextLevel === "aal2" && aal.currentLevel === "aal1") {
     redirect("/login/totp");
   }
-  redirect("/onboarding/totp");
+  redirect("/onboarding/method");
 }

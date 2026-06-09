@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const VerifySchema = z.object({
   factorId: z.string().min(1),
@@ -44,6 +45,13 @@ export async function verifyEnrollmentAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  const admin = createAdminClient();
+  await admin
+    .from("profiles")
+    .update({ mfa_method: "totp" })
+    .eq("id", user.id);
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
