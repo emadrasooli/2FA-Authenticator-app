@@ -3,48 +3,45 @@
 A free-tier-only web app implementing **invite-only sign-up** and **two-factor sign-in** for a university portal:
 
 - **Factor 1**: email + password (Supabase Auth)
-- **Factor 2**: device biometric **passkey** (WebAuthn — Touch ID, Windows Hello, Android fingerprint)
+- **Factor 2**: 6-digit code from an **authenticator app** (Google Authenticator, Authy, Microsoft Authenticator, 1Password, etc.) — uses Supabase's built-in MFA (TOTP)
+- **Recovery**: email OTP if the user loses their authenticator
 
 Roles: `admin`, `teacher`, `student` — each gets a role-specific dashboard.
 
 ## Stack
 
 - Next.js 15 (App Router) + TypeScript
-- Supabase (Postgres + Auth + RLS) — free tier
-- `@simplewebauthn/server` + `@simplewebauthn/browser` for passkeys
-- Tailwind CSS for styling
+- Supabase (Postgres + Auth + MFA + RLS) — free tier
+- Tailwind CSS
 - Deploys to Vercel Hobby (free)
-
-Everything in this app is free to run.
 
 ## 1. Create a Supabase project
 
 1. Sign up at <https://supabase.com> and create a new project (Free tier).
-2. In the SQL editor, run `supabase/migrations/0001_init.sql`.
-3. In **Project Settings → API**, copy:
+2. In the SQL editor, run `supabase/migrations/0001_init.sql`, then `supabase/migrations/0002_switch_to_totp.sql` (in order).
+3. In **Authentication → Sign In / Providers → Multi-Factor Authentication**, ensure **TOTP** is enabled (it's on by default).
+4. In **Project Settings → API Keys → Legacy anon, service_role API keys**, copy:
    - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon public` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY` (server-only!)
+   - `anon` `public` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `service_role` `secret` key → `SUPABASE_SERVICE_ROLE_KEY` (server-only!)
 
 ### Seed the first admin
 
-Supabase needs an `auth.users` row plus a matching `public.profiles` row.
-
-Easiest path:
-
-1. **Authentication → Users → Add user** in the Supabase dashboard. Set email + password, mark "Auto Confirm User".
-2. In SQL editor:
+1. **Authentication → Users → Add user** in the Supabase dashboard. Set email + password, check **Auto Confirm User**.
+2. In SQL editor (no copy-paste of UIDs needed):
    ```sql
    insert into public.profiles (id, full_name, email, role)
-   values ('<copied-user-uuid>', 'Site Admin', 'admin@example.edu', 'admin');
+   select id, 'Site Admin', email, 'admin'
+   from auth.users
+   where email = 'admin@example.edu';
    ```
-3. You can now sign in at `/login` as the admin. Because there is no passkey yet, you will be redirected to `/onboarding/passkey` to register one.
+3. You can now sign in at `/login` as the admin. Because no authenticator is enrolled yet, you'll be redirected to `/onboarding/totp` to register one.
 
 ## 2. Configure local env
 
 ```bash
 cp .env.example .env.local
-# fill in Supabase keys; leave RP_ID=localhost and RP_ORIGIN=http://localhost:3000 for dev
+# fill in the three Supabase values
 ```
 
 ## 3. Run locally
@@ -58,10 +55,16 @@ Open <http://localhost:3000>.
 
 ## 4. End-to-end flow
 
-1. Sign in as the seeded admin → register a passkey → land on `/dashboard/admin`.
-2. Go to **Invitations** → create an invite for a teacher or student.
-3. Copy the invite link, open it in an incognito window → set name + password → register a passkey → land on the correct role dashboard.
-4. Sign out, sign back in: password → biometric → dashboard.
+1. Sign in as the seeded admin → scan the QR code with your authenticator app → enter the 6-digit code → land on `/dashboard/admin`.
+2. Go to **Invitations** → create an invite for a teacher or student email.
+3. Copy the invite link, open it in incognito → set name + password → scan QR → enter 6-digit code → land on the correct role dashboard.
+4. Sign out, sign back in: password → 6-digit code from app → dashboard.
+
+### If a user loses their authenticator
+
+1. On `/login/totp`, click **Recover via email**.
+2. Enter the account email → server sends a 6-digit code via Supabase email OTP.
+3. Enter the code → server deletes the old TOTP factor → user is redirected to `/onboarding/totp` to enroll a new one.
 
 ## 5. Deploy to Vercel
 
@@ -71,10 +74,11 @@ Open <http://localhost:3000>.
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `SUPABASE_SERVICE_ROLE_KEY`
-   - `NEXT_PUBLIC_RP_ID` = your domain (e.g. `myapp.vercel.app`, **no protocol**)
-   - `NEXT_PUBLIC_RP_ORIGIN` = `https://myapp.vercel.app`
-   - `NEXT_PUBLIC_APP_URL` = `https://myapp.vercel.app`
-4. Deploy. Passkeys you registered on `localhost` will **not** work on the production domain — register a new one there.
+   - `NEXT_PUBLIC_APP_URL` = `https://your-app.vercel.app`
+4. Deploy.
+5. In Supabase **Authentication → URL Configuration**, set **Site URL** to your Vercel domain.
+
+> For high-volume email OTPs in production, plug in **Resend** (100 free/day) in Supabase → **Project Settings → Authentication → SMTP Settings**.
 
 ## Project layout
 
@@ -82,32 +86,34 @@ Open <http://localhost:3000>.
 src/
   app/
     (auth)/login                       # email + password
-    (auth)/login/passkey               # WebAuthn assertion step
+    (auth)/login/totp                  # 6-digit code from authenticator app
     (auth)/signup                      # invite-token signup
-    (auth)/onboarding/passkey          # first-time passkey registration
+    (auth)/onboarding/totp             # first-time TOTP enrollment (QR + verify)
+    (auth)/forgot                      # email OTP recovery (request)
+    (auth)/forgot/verify               # enter email code → reset TOTP
     (dashboard)/dashboard/{admin,teacher,student}
     (dashboard)/dashboard/admin/invitations
-    api/webauthn/register/{options,verify}
-    api/webauthn/authenticate/{options,verify}
     api/auth/signout
   lib/
     supabase/{client,server,admin,middleware}.ts
-    auth/{session,rbac}.ts
-    webauthn.ts                        # SimpleWebAuthn wrappers
+    auth/rbac.ts                       # requireRole, requireFullyAuthed (uses Supabase AAL2)
     env.ts
   components/ui/                       # button, input, card, label
   middleware.ts                        # session refresh + guard
-supabase/migrations/0001_init.sql      # tables, RLS, helpers
+supabase/migrations/
+  0001_init.sql                        # profiles, invitations, RLS
+  0002_switch_to_totp.sql              # drop WebAuthn tables (cleanup)
 ```
 
 ## Security model
 
-- **RLS on every table.** Users can only read their own `profiles` and `webauthn_credentials`. Admins can read all profiles and manage invitations. `webauthn_challenges` and `auth_sessions` have **no** policies — they are server-only (service role).
+- **RLS on every table.** Users can only read their own `profiles`. Admins can read all profiles and manage invitations.
 - The `SUPABASE_SERVICE_ROLE_KEY` is imported only in `src/lib/supabase/admin.ts`, which starts with `import "server-only"` so Next will refuse to bundle it into the client.
-- After password sign-in we set an `aal2_session` cookie tied to a server row in `auth_sessions`. The cookie alone is not enough; the row's `aal2_passkey` flag must be `true`. We flip it to `true` only after a verified WebAuthn assertion.
-- WebAuthn challenges are single-use and expire in 5 minutes.
+- After password sign-in the session is **AAL1**. Dashboards require **AAL2**, which only `mfa.verify()` can grant — so password alone is not enough to reach any dashboard.
+- TOTP secrets live in Supabase's `auth.mfa_factors` table (server-side, encrypted at rest by Supabase).
+- Recovery via email OTP is gated by Supabase's standard OTP rate limits; after verification we delete the old TOTP factor with the service role before letting the user enroll a new one.
 - `requireRole('admin')` etc. re-checks the role server-side on every render — never trust the client.
 
 ## What's not built (v1)
 
-Courses / assignments / grades, email-OTP recovery UI, multi-passkey management UI, audit log, SSO. The auth foundation is the focus — these are easy to layer on top.
+Courses / assignments / grades, audit log UI, SSO with university IdP, multi-authenticator management UI, i18n. The auth foundation is the focus.

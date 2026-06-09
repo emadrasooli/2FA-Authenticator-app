@@ -2,7 +2,6 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { isPasskeyVerified } from "@/lib/auth/session";
 
 export type Role = "admin" | "teacher" | "student";
 
@@ -27,9 +26,21 @@ export async function requireUser() {
 }
 
 export async function requireFullyAuthed() {
-  const user = await requireUser();
-  const verified = await isPasskeyVerified(user.id);
-  if (!verified) redirect("/login/passkey");
+  const supabase = await createClient();
+  const { data: aal } =
+    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+  if (!aal) redirect("/login");
+
+  if (aal.currentLevel === "aal1" && aal.nextLevel === "aal2") {
+    redirect("/login/totp");
+  }
+  if (aal.currentLevel === "aal1" && aal.nextLevel === "aal1") {
+    redirect("/onboarding/totp");
+  }
+
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
   return user;
 }
 

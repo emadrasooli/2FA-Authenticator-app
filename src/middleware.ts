@@ -1,13 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
-const PUBLIC_PATHS = [
-  "/",
-  "/login",
-  "/signup",
-  "/forgot-password",
-  "/api/webauthn",
-];
+const PUBLIC_PATHS = ["/", "/login", "/signup", "/forgot"];
 
 function isPublic(pathname: string) {
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {

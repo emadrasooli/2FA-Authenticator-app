@@ -13,7 +13,7 @@ export default function LoginPage({
         <CardHeader>
           <CardTitle>Sign in</CardTitle>
           <CardDescription>
-            Use your university account. You will be asked for your passkey next.
+            Use your university account. You will be asked for your 6-digit authenticator code next.
           </CardDescription>
         </CardHeader>
         <CardContent>
