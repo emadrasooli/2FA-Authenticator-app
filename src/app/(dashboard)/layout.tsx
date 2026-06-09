@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireFullyAuthed } from "@/lib/auth/rbac";
 import { LogoutButton } from "@/components/LogoutButton";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default async function DashboardLayout({
   children,
@@ -19,6 +20,7 @@ export default async function DashboardLayout({
             <span className="text-muted-foreground">
               {user.full_name} · <span className="capitalize">{user.role}</span>
             </span>
+            <ThemeToggle />
             <LogoutButton />
           </div>
         </div>
