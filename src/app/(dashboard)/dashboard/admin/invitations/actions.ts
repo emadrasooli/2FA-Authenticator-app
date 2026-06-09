@@ -5,6 +5,8 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { requireRole } from "@/lib/auth/rbac";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { env } from "@/lib/env";
+import { inviteEmailTemplate, sendEmail } from "@/lib/email";
 
 const InviteSchema = z.object({
   email: z.string().email(),
@@ -12,7 +14,7 @@ const InviteSchema = z.object({
 });
 
 export type InviteState =
-  | { error?: string; success?: string }
+  | { error?: string; success?: string; warning?: string }
   | undefined;
 
 export async function createInviteAction(
@@ -37,6 +39,34 @@ export async function createInviteAction(
   });
   if (error) return { error: error.message };
 
+  const link = `${env.APP_URL}/signup?token=${token}`;
+  const tpl = inviteEmailTemplate({
+    link,
+    role: parsed.data.role,
+    inviter: me.full_name,
+  });
+  const result = await sendEmail({
+    to: parsed.data.email,
+    subject: "You're invited to the University Portal",
+    html: tpl.html,
+    text: tpl.text,
+  });
+
   revalidatePath("/dashboard/admin/invitations");
-  return { success: `Invite created for ${parsed.data.email}.` };
+
+  if (!result.sent) {
+    if (result.reason === "not-configured") {
+      return {
+        success: `Invite created for ${parsed.data.email}.`,
+        warning:
+          "Email sending is not configured (RESEND_API_KEY / RESEND_FROM missing). Copy the invite link from the list below and share it manually.",
+      };
+    }
+    return {
+      success: `Invite created for ${parsed.data.email}.`,
+      warning: `Email send failed: ${result.error}. Copy the link below and share it manually.`,
+    };
+  }
+
+  return { success: `Invite emailed to ${parsed.data.email}.` };
 }

@@ -44,6 +44,17 @@ cp .env.example .env.local
 # fill in the three Supabase values
 ```
 
+### Optional — email invitations via Resend
+
+Without this, admin invites are still created and the link is displayed in the dashboard for you to copy/share. To have the link automatically emailed to the invitee:
+
+1. Sign up at <https://resend.com> (free tier: 100 emails/day, 3000/month).
+2. **API Keys → Create API Key** → copy it into `.env.local` as `RESEND_API_KEY`.
+3. **Domains** (or use the sandbox sender `onboarding@resend.dev`):
+   - **Sandbox** (`onboarding@resend.dev`): zero setup, but Resend will only deliver to **your own** Resend-account email — fine for dev.
+   - **Verified domain** (production): add your domain → add the DNS records Resend shows → wait for verification → put e.g. `noreply@yourdomain.edu` in `RESEND_FROM`.
+4. Restart `npm run dev`.
+
 ## 3. Run locally
 
 ```bash
