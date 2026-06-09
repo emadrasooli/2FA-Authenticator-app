@@ -43,6 +43,11 @@ export function InviteForm() {
       {state?.success && (
         <p className="text-sm text-primary sm:col-span-3">{state.success}</p>
       )}
+      {state?.warning && (
+        <p className="text-sm text-muted-foreground sm:col-span-3">
+          {state.warning}
+        </p>
+      )}
     </form>
   );
 }
