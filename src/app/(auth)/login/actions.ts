@@ -3,7 +3,6 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 
 const LoginSchema = z.object({
   email: z.string().email(),
@@ -31,20 +30,11 @@ export async function loginAction(
   });
   if (error || !data.user) return { error: "Invalid credentials" };
 
-  // Check if user has any passkey
-  const admin = createAdminClient();
-  const { count } = await admin
-    .from("webauthn_credentials")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", data.user.id);
+  const { data: aal } =
+    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
 
-  // No passkey enrolled yet → force onboarding (verified by email link / first login).
-  if ((count ?? 0) === 0) {
-    redirect("/onboarding/passkey");
+  if (aal?.nextLevel === "aal2" && aal.currentLevel === "aal1") {
+    redirect("/login/totp");
   }
-
-  const nextPath = parsed.data.next && parsed.data.next.startsWith("/")
-    ? parsed.data.next
-    : "/login/passkey";
-  redirect(nextPath === "/login/passkey" ? "/login/passkey" : "/login/passkey?next=" + encodeURIComponent(nextPath));
+  redirect("/onboarding/totp");
 }

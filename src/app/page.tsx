@@ -6,7 +6,7 @@ export default function Home() {
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-6 px-6 text-center">
       <h1 className="text-4xl font-bold tracking-tight">University Portal</h1>
       <p className="text-muted-foreground">
-        Secure sign-in with email and your device passkey (fingerprint / Face ID / Windows Hello).
+        Secure sign-in with email, password, and a 6-digit code from your authenticator app.
       </p>
       <div className="flex gap-3">
         <Link href="/login">

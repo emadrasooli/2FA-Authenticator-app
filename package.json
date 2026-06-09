@@ -10,8 +10,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@simplewebauthn/browser": "^11.0.0",
-    "@simplewebauthn/server": "^11.0.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
     "class-variance-authority": "^0.7.0",
