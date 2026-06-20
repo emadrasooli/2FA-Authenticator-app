@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useActionState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +11,11 @@ import { loginAction, type LoginState } from "./actions";
 export function LoginForm({
   searchParamsPromise,
 }: {
-  searchParamsPromise: Promise<{ next?: string; error?: string }>;
+  searchParamsPromise: Promise<{
+    next?: string;
+    error?: string;
+    reset?: string;
+  }>;
 }) {
   const params = use(searchParamsPromise);
   const [state, formAction, pending] = useActionState<LoginState, FormData>(
@@ -21,6 +26,11 @@ export function LoginForm({
   return (
     <form action={formAction} className="space-y-4">
       <input type="hidden" name="next" value={params.next ?? ""} />
+      {params.reset === "ok" && (
+        <p className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
+          Password updated. Sign in with your new password.
+        </p>
+      )}
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
         <Input
@@ -32,7 +42,15 @@ export function LoginForm({
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="password">Password</Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="password">Password</Label>
+          <Link
+            href="/forgot-password"
+            className="text-sm text-primary underline-offset-4 hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <PasswordInput
           id="password"
           name="password"
