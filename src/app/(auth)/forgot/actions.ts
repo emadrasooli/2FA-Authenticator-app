@@ -28,7 +28,7 @@ export async function requestRecoveryAction(
 
 const VerifySchema = z.object({
   email: z.string().email(),
-  token: z.string().regex(/^\d{6}$/u, "Code must be 6 digits"),
+  token: z.string().regex(/^\d{6,8}$/u, "Enter the code from your email"),
 });
 
 export async function verifyRecoveryAction(

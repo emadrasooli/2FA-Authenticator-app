@@ -28,14 +28,14 @@ export function VerifyForm({
         <Input id="email-display" value={params.email ?? ""} disabled readOnly />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="token">6-digit code from email</Label>
+        <Label htmlFor="token">Code from email</Label>
         <Input
           id="token"
           name="token"
           inputMode="numeric"
           autoComplete="one-time-code"
-          pattern="\d{6}"
-          maxLength={6}
+          pattern="\d{6,8}"
+          maxLength={8}
           minLength={6}
           autoFocus
           required
