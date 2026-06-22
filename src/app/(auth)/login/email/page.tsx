@@ -10,6 +10,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { issueEmailOtp } from "@/lib/auth/email-otp";
+import { verifyEmail2faCookie } from "@/lib/auth/email-2fa-session";
 import { EmailCodeClient } from "./EmailCodeClient";
 
 export default async function LoginEmailPage() {
@@ -19,18 +20,25 @@ export default async function LoginEmailPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // Already cleared the second factor by either mechanism → straight in.
+  const { data: aal } =
+    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal?.currentLevel === "aal2") redirect("/dashboard");
+  if (await verifyEmail2faCookie(user.id)) redirect("/dashboard");
+
   const admin = createAdminClient();
   const { data: profile } = await admin
     .from("profiles")
-    .select("email, mfa_method")
+    .select("email")
     .eq("id", user.id)
     .maybeSingle();
-
   if (!profile) redirect("/login");
-  if (profile.mfa_method !== "email") redirect("/login/totp");
 
-  // Fire-and-(soft-)wait: issue the code on render. If it fails we still let
-  // the user click "Resend" from the client.
+  // Offer the authenticator fallback only if the user has actually enrolled one.
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  const hasAuthenticator = (factors?.totp?.length ?? 0) > 0;
+
+  // Issue the code on render. If it fails the user can still click "Resend".
   const issued = await issueEmailOtp({ userId: user.id, email: profile.email });
 
   return (
@@ -39,7 +47,8 @@ export default async function LoginEmailPage() {
         <CardHeader>
           <CardTitle>Check your email</CardTitle>
           <CardDescription>
-            We sent a 6-digit code to <strong>{profile.email}</strong>. It expires in 10 minutes.
+            We sent a code to <strong>{profile.email}</strong>. It expires in 10
+            minutes.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -51,6 +60,14 @@ export default async function LoginEmailPage() {
             </p>
           )}
           <EmailCodeClient />
+          {hasAuthenticator && (
+            <p className="text-center text-sm text-muted-foreground">
+              Prefer your app?{" "}
+              <Link className="text-primary underline" href="/login/totp">
+                Use authenticator app instead
+              </Link>
+            </p>
+          )}
           <p className="text-center text-sm text-muted-foreground">
             <Link className="underline" href="/login">
               Back to sign in

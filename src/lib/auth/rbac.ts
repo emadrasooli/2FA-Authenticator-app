@@ -33,34 +33,28 @@ export async function requireUser() {
   return user;
 }
 
-export async function requireFullyAuthed() {
+/**
+ * Returns true if the current session has cleared the second factor by EITHER
+ * mechanism: a verified TOTP factor (Supabase AAL2) or a verified email code
+ * (our signed email_2fa cookie). The two are interchangeable fallbacks.
+ */
+export async function hasPassedSecondFactor(userId: string): Promise<boolean> {
   const supabase = await createClient();
-  const {
-    data: { user: authUser },
-  } = await supabase.auth.getUser();
-  if (!authUser) redirect("/login");
+  const { data: aal } =
+    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal?.currentLevel === "aal2") return true;
+  return verifyEmail2faCookie(userId);
+}
 
+export async function requireFullyAuthed() {
   const profile = await getCurrentUser();
   if (!profile) redirect("/login");
 
-  if (profile.mfa_method === "totp") {
-    const { data: aal } =
-      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (!aal) redirect("/login");
+  if (await hasPassedSecondFactor(profile.id)) return profile;
 
-    if (aal.currentLevel === "aal1" && aal.nextLevel === "aal2") {
-      redirect("/login/totp");
-    }
-    if (aal.currentLevel === "aal1" && aal.nextLevel === "aal1") {
-      redirect("/onboarding/method");
-    }
-    return profile;
-  }
-
-  // mfa_method === 'email'
-  const passed = await verifyEmail2faCookie(profile.id);
-  if (!passed) redirect("/login/email");
-  return profile;
+  // Not cleared yet → send to the user's primary challenge.
+  if (profile.mfa_method === "email") redirect("/login/email");
+  redirect("/login/totp");
 }
 
 export async function requireRole(role: Role | Role[]) {
