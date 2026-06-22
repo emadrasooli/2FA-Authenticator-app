@@ -26,10 +26,13 @@ export async function loginAction(
 
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithPassword({
-    email: parsed.data.email,
-    password: parsed.data.password,
-  });
-  if (error || !data.user) return { error: "Invalid credentials" };
+      email: parsed.data.email,
+      password: parsed.data.password,
+    });
+    if (error || !data.user) {
+      console.error("[login] supabase error:", error);
+      return { error: "Invalid credentials" };
+    }
 
   // Look up the user's chosen 2FA method.
   const admin = createAdminClient();

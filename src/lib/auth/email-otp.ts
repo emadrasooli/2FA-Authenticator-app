@@ -61,6 +61,8 @@ export async function issueEmailOtp(opts: {
     text: tpl.text,
   });
 
+  console.error("[email-otp] resend result:", JSON.stringify(result));
+
   if (!result.sent) {
     return { ok: false, reason: result.reason, error: result.error };
   }
