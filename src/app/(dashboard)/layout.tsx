@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireFullyAuthed } from "@/lib/auth/rbac";
-import { LogoutButton } from "@/components/LogoutButton";
+import { ProfileMenu } from "@/components/ProfileMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default async function DashboardLayout({
@@ -16,12 +16,9 @@ export default async function DashboardLayout({
           <Link href={`/dashboard/${user.role}`} className="font-semibold">
             University Portal
           </Link>
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-muted-foreground">
-              {user.full_name} · <span className="capitalize">{user.role}</span>
-            </span>
+          <div className="flex items-center gap-3 text-sm">
             <ThemeToggle />
-            <LogoutButton />
+            <ProfileMenu fullName={user.full_name} role={user.role} />
           </div>
         </div>
       </header>

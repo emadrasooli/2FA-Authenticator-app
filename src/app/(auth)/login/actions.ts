@@ -29,10 +29,7 @@ export async function loginAction(
       email: parsed.data.email,
       password: parsed.data.password,
     });
-    if (error || !data.user) {
-      console.error("[login] supabase error:", error);
-      return { error: "Invalid credentials" };
-    }
+  if (error || !data.user) return { error: "Invalid credentials" };
 
   // Look up the user's chosen 2FA method.
   const admin = createAdminClient();
