@@ -76,6 +76,13 @@ export async function hasPassedSecondFactor(
   config: MfaConfig,
 ): Promise<boolean> {
   const supabase = await createClient();
+  // Authenticate the session against the auth server before reading anything
+  // session-derived (silences supabase-js insecure-session warnings).
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return false;
+
   const { data: aal } =
     await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
   if (config.totpEnabled && aal?.currentLevel === "aal2") return true;

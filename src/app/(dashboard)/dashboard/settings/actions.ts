@@ -57,6 +57,8 @@ export async function removeAuthenticatorAction(
   }
 
   const supabase = await createClient();
+  // Authenticate before any MFA call.
+  await supabase.auth.getUser();
   const admin = createAdminClient();
   const { data: factors } = await supabase.auth.mfa.listFactors();
   for (const f of factors?.totp ?? []) {

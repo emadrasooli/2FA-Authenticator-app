@@ -28,6 +28,9 @@ export async function verifySettingsEnrollmentAction(
   }
 
   const supabase = await createClient();
+  // Authenticate before any MFA call.
+  await supabase.auth.getUser();
+
   const { data: challenge, error: challengeErr } =
     await supabase.auth.mfa.challenge({ factorId: parsed.data.factorId });
   if (challengeErr || !challenge) {
