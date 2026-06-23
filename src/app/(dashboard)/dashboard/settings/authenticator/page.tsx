@@ -18,6 +18,8 @@ export default async function SettingsAuthenticatorPage({
   await requireFullyAuthed();
   const makePrimary = (await searchParams).primary === "1";
   const supabase = await createClient();
+  // Authenticate before any MFA call.
+  await supabase.auth.getUser();
 
   // Already enrolled → nothing to do.
   const { data: existing } = await supabase.auth.mfa.listFactors();

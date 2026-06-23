@@ -24,6 +24,12 @@ export async function verifyLoginTotpAction(
   }
 
   const supabase = await createClient();
+  // Authenticate the session before any MFA call (silences supabase-js
+  // insecure-session warnings).
+  const {
+    data: { user: authedUser },
+  } = await supabase.auth.getUser();
+  if (!authedUser) redirect("/login");
 
   const { data: challenge, error: challengeErr } =
     await supabase.auth.mfa.challenge({ factorId: parsed.data.factorId });
@@ -40,14 +46,10 @@ export async function verifyLoginTotpAction(
     return { error: "Incorrect or expired code. Try again." };
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
-    .eq("id", user.id)
+    .eq("id", authedUser.id)
     .maybeSingle();
   redirect(`/dashboard/${profile?.role ?? "student"}`);
 }

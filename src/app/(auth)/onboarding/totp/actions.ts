@@ -25,6 +25,10 @@ export async function verifyEnrollmentAction(
   }
 
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
 
   const { data: challenge, error: challengeErr } =
     await supabase.auth.mfa.challenge({ factorId: parsed.data.factorId });
@@ -40,11 +44,6 @@ export async function verifyEnrollmentAction(
   if (verifyErr) {
     return { error: "Incorrect code. Try again." };
   }
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
 
   const admin = createAdminClient();
   await admin
