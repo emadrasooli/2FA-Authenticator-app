@@ -8,41 +8,23 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { requireFullyAuthed } from "@/lib/auth/rbac";
-import { createClient } from "@/lib/supabase/server";
-import { MethodSettings } from "./MethodSettings";
+import { requireFullyAuthed, getMfaConfig } from "@/lib/auth/rbac";
+import { ToggleEmailForm } from "./ToggleEmailForm";
 import { RemoveAuthenticatorButton } from "./RemoveAuthenticatorButton";
+import { DefaultMethodForm } from "./DefaultMethodForm";
 
 export default async function SettingsPage() {
   const user = await requireFullyAuthed();
-  const supabase = await createClient();
-  const { data: factors } = await supabase.auth.mfa.listFactors();
-  const hasAuthenticator = (factors?.totp?.length ?? 0) > 0;
+  const config = (await getMfaConfig())!;
 
   return (
     <section className="mx-auto max-w-2xl space-y-6">
       <header>
         <h1 className="text-2xl font-bold">Settings</h1>
         <p className="text-muted-foreground">
-          Manage how you complete two-factor authentication.
+          Manage your two-factor authentication methods.
         </p>
       </header>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Primary 2FA method</CardTitle>
-          <CardDescription>
-            This is what you&apos;re asked for first at sign-in. The other method
-            is always available as a fallback.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <MethodSettings
-            current={user.mfa_method}
-            hasAuthenticator={hasAuthenticator}
-          />
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
@@ -55,7 +37,7 @@ export default async function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {hasAuthenticator ? (
+          {config.totpEnabled ? (
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2 text-sm text-primary">
                 <CheckCircle2 className="h-4 w-4" /> Enabled
@@ -64,9 +46,9 @@ export default async function SettingsPage() {
             </div>
           ) : (
             <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Not set up</span>
+              <span className="text-sm text-muted-foreground">Disabled</span>
               <Link href="/dashboard/settings/authenticator">
-                <Button size="sm">Set up authenticator</Button>
+                <Button size="sm">Enable</Button>
               </Link>
             </div>
           )}
@@ -84,11 +66,27 @@ export default async function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <span className="flex items-center gap-2 text-sm text-primary">
-            <CheckCircle2 className="h-4 w-4" /> Always available
-          </span>
+          <ToggleEmailForm
+            enabled={config.emailEnabled}
+            canDisable={config.totpEnabled}
+          />
         </CardContent>
       </Card>
+
+      {config.totpEnabled && config.emailEnabled && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Default at sign-in</CardTitle>
+            <CardDescription>
+              Which method to suggest first when both are enabled. You can always
+              switch on the sign-in screen.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DefaultMethodForm current={config.preferred} />
+          </CardContent>
+        </Card>
+      )}
     </section>
   );
 }

@@ -32,9 +32,11 @@ export function ProfileMenu({
 
   async function signOut() {
     setSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    // Server-side first: clears the email_2fa cookie AND the Supabase session.
     await fetch("/api/auth/signout", { method: "POST" });
+    // Then ensure the client-side Supabase store is wiped too.
+    const supabase = createClient();
+    await supabase.auth.signOut({ scope: "local" }).catch(() => {});
     router.replace("/login");
     router.refresh();
   }
