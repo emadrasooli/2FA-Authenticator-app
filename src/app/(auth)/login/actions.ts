@@ -26,29 +26,24 @@ export async function loginAction(
 
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithPassword({
-      email: parsed.data.email,
-      password: parsed.data.password,
-    });
+    email: parsed.data.email,
+    password: parsed.data.password,
+  });
   if (error || !data.user) return { error: "Invalid credentials" };
 
-  // Look up the user's chosen 2FA method.
   const admin = createAdminClient();
   const { data: profile } = await admin
     .from("profiles")
-    .select("mfa_method")
+    .select("mfa_method, email_2fa_enabled")
     .eq("id", data.user.id)
     .maybeSingle();
 
-  if (profile?.mfa_method === "email") {
-    redirect("/login/email");
-  }
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  const totpEnabled = (factors?.totp?.length ?? 0) > 0;
+  const emailEnabled = profile?.email_2fa_enabled ?? true;
 
-  // Default to TOTP for everyone else (including freshly-seeded admins
-  // whose mfa_method is the column default).
-  const { data: aal } =
-    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (aal?.nextLevel === "aal2" && aal.currentLevel === "aal1") {
-    redirect("/login/totp");
-  }
-  redirect("/onboarding/method");
+  if (!totpEnabled && !emailEnabled) redirect("/onboarding/method");
+  if (totpEnabled && emailEnabled) redirect("/login/choose");
+  if (totpEnabled) redirect("/login/totp");
+  redirect("/login/email");
 }

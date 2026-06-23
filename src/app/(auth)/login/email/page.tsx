@@ -10,7 +10,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { issueEmailOtp } from "@/lib/auth/email-otp";
-import { verifyEmail2faCookie } from "@/lib/auth/email-2fa-session";
+import { getMfaConfig, hasPassedSecondFactor } from "@/lib/auth/rbac";
 import { EmailCodeClient } from "./EmailCodeClient";
 
 export default async function LoginEmailPage() {
@@ -20,11 +20,14 @@ export default async function LoginEmailPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  // Already cleared the second factor by either mechanism → straight in.
-  const { data: aal } =
-    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (aal?.currentLevel === "aal2") redirect("/dashboard");
-  if (await verifyEmail2faCookie(user.id)) redirect("/dashboard");
+  const config = await getMfaConfig();
+  if (!config) redirect("/login");
+
+  if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
+
+  if (!config.emailEnabled) {
+    redirect(config.totpEnabled ? "/login/totp" : "/onboarding/method");
+  }
 
   const admin = createAdminClient();
   const { data: profile } = await admin
@@ -34,11 +37,6 @@ export default async function LoginEmailPage() {
     .maybeSingle();
   if (!profile) redirect("/login");
 
-  // Offer the authenticator fallback only if the user has actually enrolled one.
-  const { data: factors } = await supabase.auth.mfa.listFactors();
-  const hasAuthenticator = (factors?.totp?.length ?? 0) > 0;
-
-  // Issue the code on render. If it fails the user can still click "Resend".
   const issued = await issueEmailOtp({ userId: user.id, email: profile.email });
 
   return (
@@ -60,7 +58,7 @@ export default async function LoginEmailPage() {
             </p>
           )}
           <EmailCodeClient />
-          {hasAuthenticator && (
+          {config.totpEnabled && (
             <p className="text-center text-sm text-muted-foreground">
               Prefer your app?{" "}
               <Link className="text-primary underline" href="/login/totp">

@@ -8,7 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/server";
-import { verifyEmail2faCookie } from "@/lib/auth/email-2fa-session";
+import { getMfaConfig, hasPassedSecondFactor } from "@/lib/auth/rbac";
 import { VerifyClient } from "./VerifyClient";
 
 export default async function LoginTotpPage() {
@@ -18,15 +18,17 @@ export default async function LoginTotpPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: aal } =
-    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (aal?.currentLevel === "aal2") redirect("/dashboard");
-  if (await verifyEmail2faCookie(user.id)) redirect("/dashboard");
+  const config = await getMfaConfig();
+  if (!config) redirect("/login");
+
+  if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
+
+  if (!config.totpEnabled) {
+    redirect(config.emailEnabled ? "/login/email" : "/onboarding/method");
+  }
 
   const { data: factors } = await supabase.auth.mfa.listFactors();
-  const totp = factors?.totp?.[0];
-  // No authenticator enrolled → fall back to the always-available email code.
-  if (!totp) redirect("/login/email");
+  const totp = factors?.totp?.[0]!;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
@@ -40,12 +42,14 @@ export default async function LoginTotpPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <VerifyClient factorId={totp.id} />
-          <p className="text-center text-sm text-muted-foreground">
-            Don&apos;t have your authenticator?{" "}
-            <Link className="text-primary underline" href="/login/email">
-              Use email code instead
-            </Link>
-          </p>
+          {config.emailEnabled && (
+            <p className="text-center text-sm text-muted-foreground">
+              Don&apos;t have your authenticator?{" "}
+              <Link className="text-primary underline" href="/login/email">
+                Use email code instead
+              </Link>
+            </p>
+          )}
         </CardContent>
       </Card>
     </main>
