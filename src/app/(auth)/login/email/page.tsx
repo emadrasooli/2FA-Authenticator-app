@@ -26,7 +26,9 @@ export default async function LoginEmailPage() {
   if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
 
   if (!config.emailEnabled) {
-    redirect(config.totpEnabled ? "/login/totp" : "/onboarding/method");
+    if (config.totpEnabled) redirect("/login/totp");
+    if (config.passkeyEnabled) redirect("/login/passkey");
+    redirect("/onboarding/method");
   }
 
   const admin = createAdminClient();
@@ -58,19 +60,27 @@ export default async function LoginEmailPage() {
             </p>
           )}
           <EmailCodeClient />
-          {config.totpEnabled && (
-            <p className="text-center text-sm text-muted-foreground">
-              Prefer your app?{" "}
-              <Link className="text-primary underline" href="/login/totp">
-                Use authenticator app instead
+          <div className="space-y-1 text-center text-sm text-muted-foreground">
+            {config.passkeyEnabled && (
+              <p>
+                <Link className="text-primary underline" href="/login/passkey">
+                  Use this device&apos;s passkey instead
+                </Link>
+              </p>
+            )}
+            {config.totpEnabled && (
+              <p>
+                <Link className="text-primary underline" href="/login/totp">
+                  Use authenticator app instead
+                </Link>
+              </p>
+            )}
+            <p>
+              <Link className="underline" href="/login">
+                Back to sign in
               </Link>
             </p>
-          )}
-          <p className="text-center text-sm text-muted-foreground">
-            <Link className="underline" href="/login">
-              Back to sign in
-            </Link>
-          </p>
+          </div>
         </CardContent>
       </Card>
     </main>

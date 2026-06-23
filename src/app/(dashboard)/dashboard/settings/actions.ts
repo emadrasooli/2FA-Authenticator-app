@@ -7,8 +7,10 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireFullyAuthed, getMfaConfig } from "@/lib/auth/rbac";
 import { clearEmail2faCookie } from "@/lib/auth/email-2fa-session";
+import { clearPasskey2faCookie } from "@/lib/auth/passkey-2fa-session";
+import { deleteAllUserCredentials } from "@/lib/auth/webauthn";
 
-const MethodSchema = z.object({ method: z.enum(["totp", "email"]) });
+const MethodSchema = z.object({ method: z.enum(["totp", "email", "passkey"]) });
 
 export type SettingsState =
   | { error?: string; success?: string }
@@ -25,25 +27,24 @@ export async function toggleEmailMethodAction(
   const config = await getMfaConfig();
   if (!config) return { error: "Could not load your settings." };
 
-  if (!want && !config.totpEnabled) {
-    return { error: "Set up the authenticator app first — you need at least one method." };
+  if (!want && !config.totpEnabled && !config.passkeyEnabled) {
+    return { error: "Enable another method first — you need at least one." };
   }
 
   const admin = createAdminClient();
   const patch: Record<string, unknown> = { email_2fa_enabled: want };
-  // If disabling and the preferred method was email, fall back to totp.
-  if (!want && config.preferred === "email") patch.mfa_method = "totp";
+  if (!want && config.preferred === "email") {
+    patch.mfa_method = config.totpEnabled ? "totp" : "passkey";
+  }
   await admin.from("profiles").update(patch).eq("id", user.id);
 
-  // If we just disabled email, drop any active email-AAL2 cookie so a stale
-  // signal doesn't satisfy hasPassedSecondFactor on subsequent loads.
   if (!want) await clearEmail2faCookie();
 
   revalidatePath("/dashboard/settings");
   return { success: want ? "Email code enabled." : "Email code disabled." };
 }
 
-/** Remove the TOTP factor. Email must be enabled (it can't drop to zero methods). */
+/** Remove the TOTP factor. Must keep at least one method enabled. */
 export async function removeAuthenticatorAction(
   _prev: SettingsState,
   _formData: FormData,
@@ -52,12 +53,11 @@ export async function removeAuthenticatorAction(
   const config = await getMfaConfig();
   if (!config) return { error: "Could not load your settings." };
 
-  if (!config.emailEnabled) {
-    return { error: "Enable email code first — you need at least one method." };
+  if (!config.emailEnabled && !config.passkeyEnabled) {
+    return { error: "Enable another method first — you need at least one." };
   }
 
   const supabase = await createClient();
-  // Authenticate before any MFA call.
   await supabase.auth.getUser();
   const admin = createAdminClient();
   const { data: factors } = await supabase.auth.mfa.listFactors();
@@ -68,7 +68,7 @@ export async function removeAuthenticatorAction(
   if (config.preferred === "totp") {
     await admin
       .from("profiles")
-      .update({ mfa_method: "email" })
+      .update({ mfa_method: config.passkeyEnabled ? "passkey" : "email" })
       .eq("id", user.id);
   }
 
@@ -76,7 +76,35 @@ export async function removeAuthenticatorAction(
   return { success: "Authenticator removed." };
 }
 
-/** Set which method is the default at login when both are enabled. */
+/** Remove all passkeys. Must keep at least one method enabled. */
+export async function removePasskeyAction(
+  _prev: SettingsState,
+  _formData: FormData,
+): Promise<SettingsState> {
+  const user = await requireFullyAuthed();
+  const config = await getMfaConfig();
+  if (!config) return { error: "Could not load your settings." };
+
+  if (!config.emailEnabled && !config.totpEnabled) {
+    return { error: "Enable another method first — you need at least one." };
+  }
+
+  await deleteAllUserCredentials(user.id);
+  await clearPasskey2faCookie();
+
+  if (config.preferred === "passkey") {
+    const admin = createAdminClient();
+    await admin
+      .from("profiles")
+      .update({ mfa_method: config.totpEnabled ? "totp" : "email" })
+      .eq("id", user.id);
+  }
+
+  revalidatePath("/dashboard/settings");
+  return { success: "Passkey removed." };
+}
+
+/** Set the default method to highlight first at login. */
 export async function setPreferredMethodAction(
   _prev: SettingsState,
   formData: FormData,
@@ -88,9 +116,11 @@ export async function setPreferredMethodAction(
   const config = await getMfaConfig();
   if (!config) return { error: "Could not load your settings." };
 
-  // Picking a default that isn't enabled doesn't make sense; route to setup.
   if (parsed.data.method === "totp" && !config.totpEnabled) {
     redirect("/dashboard/settings/authenticator?primary=1");
+  }
+  if (parsed.data.method === "passkey" && !config.passkeyEnabled) {
+    redirect("/dashboard/settings/passkey?primary=1");
   }
   if (parsed.data.method === "email" && !config.emailEnabled) {
     return { error: "Enable email code first." };

@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { userHasPasskey } from "@/lib/auth/webauthn";
+import { loginRedirectFor } from "@/lib/auth/rbac";
 
 const LoginSchema = z.object({
   email: z.string().email(),
@@ -41,9 +43,15 @@ export async function loginAction(
   const { data: factors } = await supabase.auth.mfa.listFactors();
   const totpEnabled = (factors?.totp?.length ?? 0) > 0;
   const emailEnabled = profile?.email_2fa_enabled ?? true;
+  const passkeyEnabled = await userHasPasskey(data.user.id);
+  const preferred = (profile?.mfa_method ?? "email") as "totp" | "email" | "passkey";
 
-  if (!totpEnabled && !emailEnabled) redirect("/onboarding/method");
-  if (totpEnabled && emailEnabled) redirect("/login/choose");
-  if (totpEnabled) redirect("/login/totp");
-  redirect("/login/email");
+  redirect(
+    loginRedirectFor({
+      totpEnabled,
+      emailEnabled,
+      passkeyEnabled,
+      preferred,
+    }),
+  );
 }
