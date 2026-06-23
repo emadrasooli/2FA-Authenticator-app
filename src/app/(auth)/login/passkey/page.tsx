@@ -9,9 +9,9 @@ import {
 } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/server";
 import { getMfaConfig, hasPassedSecondFactor } from "@/lib/auth/rbac";
-import { VerifyClient } from "./VerifyClient";
+import { PasskeyLoginClient } from "./PasskeyLoginClient";
 
-export default async function LoginTotpPage() {
+export default async function LoginPasskeyPage() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -23,32 +23,29 @@ export default async function LoginTotpPage() {
 
   if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
 
-  if (!config.totpEnabled) {
-    if (config.passkeyEnabled) redirect("/login/passkey");
+  if (!config.passkeyEnabled) {
+    if (config.totpEnabled) redirect("/login/totp");
     if (config.emailEnabled) redirect("/login/email");
     redirect("/onboarding/method");
   }
-
-  const { data: factors } = await supabase.auth.mfa.listFactors();
-  const totp = factors?.totp?.[0]!;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
       <Card className="w-full">
         <CardHeader>
-          <CardTitle>Enter your 6-digit code</CardTitle>
+          <CardTitle>Use your device</CardTitle>
           <CardDescription>
-            Open your authenticator app and enter the code for{" "}
-            {totp.friendly_name ?? "this account"}.
+            Touch the fingerprint reader, look at the camera, or confirm with
+            Windows Hello / Touch ID. Your browser will pop up a prompt.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <VerifyClient factorId={totp.id} />
+          <PasskeyLoginClient />
           <div className="space-y-1 text-center text-sm text-muted-foreground">
-            {config.passkeyEnabled && (
+            {config.totpEnabled && (
               <p>
-                <Link className="text-primary underline" href="/login/passkey">
-                  Use this device&apos;s passkey instead
+                <Link className="text-primary underline" href="/login/totp">
+                  Use authenticator app instead
                 </Link>
               </p>
             )}
