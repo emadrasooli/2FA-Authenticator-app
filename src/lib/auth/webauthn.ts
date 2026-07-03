@@ -15,16 +15,27 @@ import { env } from "@/lib/env";
 
 type ChallengePurpose = "register" | "authenticate";
 
+const CHALLENGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+type ConsumeResult =
+  | { challenge: string }
+  | { challenge: null; reason: "none" | "expired" };
+
 async function persistChallenge(opts: {
   userId: string;
   challenge: string;
   purpose: ChallengePurpose;
 }) {
   const admin = createAdminClient();
+  // Compute expires_at in THIS process's clock (not the DB's) and compare it
+  // against the same clock on read. This makes the challenge lifetime immune
+  // to clock skew between the app server and the Postgres server.
+  const expiresAt = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
   const { error } = await admin.from("webauthn_challenges").insert({
     user_id: opts.userId,
     challenge: opts.challenge,
     purpose: opts.purpose,
+    expires_at: expiresAt,
   });
   if (error) {
     // Surface the real cause (missing table, RLS, etc.) instead of letting the
@@ -37,7 +48,7 @@ async function persistChallenge(opts: {
 async function consumeChallenge(opts: {
   userId: string;
   purpose: ChallengePurpose;
-}): Promise<string | null> {
+}): Promise<ConsumeResult> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("webauthn_challenges")
@@ -51,14 +62,16 @@ async function consumeChallenge(opts: {
   if (error) {
     throw new Error(`Could not read WebAuthn challenge: ${error.message}`);
   }
-  if (!data) return null;
+  if (!data) return { challenge: null, reason: "none" };
   // Always consume (single-use) even if expired, so a stale row can't linger.
   await admin
     .from("webauthn_challenges")
     .update({ consumed_at: new Date().toISOString() })
     .eq("id", data.id);
-  if (new Date(data.expires_at).getTime() <= Date.now()) return null;
-  return data.challenge;
+  if (new Date(data.expires_at).getTime() <= Date.now()) {
+    return { challenge: null, reason: "expired" };
+  }
+  return { challenge: data.challenge };
 }
 
 export async function listUserCredentials(userId: string) {
@@ -109,19 +122,21 @@ export async function verifyAndStoreRegistration(opts: {
   response: RegistrationResponseJSON;
   deviceName?: string;
 }) {
-  const expectedChallenge = await consumeChallenge({
+  const consumed = await consumeChallenge({
     userId: opts.userId,
     purpose: "register",
   });
-  if (!expectedChallenge) {
+  if (consumed.challenge === null) {
     throw new Error(
-      "No active registration challenge — it may have expired. Please try again.",
+      consumed.reason === "expired"
+        ? "Registration challenge expired. Please try again."
+        : "No registration challenge found. Please start again.",
     );
   }
 
   const verification = await verifyRegistrationResponse({
     response: opts.response,
-    expectedChallenge,
+    expectedChallenge: consumed.challenge,
     expectedOrigin: env.RP_ORIGIN,
     expectedRPID: env.RP_ID,
     requireUserVerification: true,
@@ -177,12 +192,16 @@ export async function verifyAuthentication(opts: {
   userId: string;
   response: AuthenticationResponseJSON;
 }) {
-  const expectedChallenge = await consumeChallenge({
+  const consumed = await consumeChallenge({
     userId: opts.userId,
     purpose: "authenticate",
   });
-  if (!expectedChallenge) {
-    throw new Error("No active authentication challenge");
+  if (consumed.challenge === null) {
+    throw new Error(
+      consumed.reason === "expired"
+        ? "Authentication challenge expired. Please try again."
+        : "No authentication challenge found. Please start again.",
+    );
   }
 
   const admin = createAdminClient();
@@ -196,7 +215,7 @@ export async function verifyAuthentication(opts: {
 
   const verification = await verifyAuthenticationResponse({
     response: opts.response,
-    expectedChallenge,
+    expectedChallenge: consumed.challenge,
     expectedOrigin: env.RP_ORIGIN,
     expectedRPID: env.RP_ID,
     credential: {
