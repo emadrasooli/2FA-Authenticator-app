@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { RegistrationResponseJSON } from "@simplewebauthn/types";
 import { verifyAndStoreRegistration } from "@/lib/auth/webauthn";
-import { issuePasskey2faCookie } from "@/lib/auth/passkey-2fa-session";
+import { issueAal2Cookie } from "@/lib/auth/aal-cookie";
 
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   }
 
   // Registering a passkey logged-in equals proving the second factor right now.
-  await issuePasskey2faCookie(user.id);
+  await issueAal2Cookie("passkey", user.id);
 
   if (body.makePreferred) {
     const admin = createAdminClient();

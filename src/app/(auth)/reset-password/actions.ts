@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { clearEmail2faCookie } from "@/lib/auth/email-2fa-session";
+import { clearAal2Cookie } from "@/lib/auth/aal-cookie";
 
 const Schema = z
   .object({
@@ -39,7 +39,8 @@ export async function resetPasswordAction(
   // the user back to /login to authenticate with the new password and
   // re-pass the 2FA challenge.
   await supabase.auth.signOut();
-  await clearEmail2faCookie();
+  await clearAal2Cookie("email");
+  await clearAal2Cookie("passkey");
 
   redirect("/login?reset=ok");
 }

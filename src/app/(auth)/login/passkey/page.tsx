@@ -7,21 +7,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/server";
-import { getMfaConfig, hasPassedSecondFactor } from "@/lib/auth/rbac";
+import { requireMfaGate } from "@/lib/auth/rbac";
 import { PasskeyLoginClient } from "./PasskeyLoginClient";
 
 export default async function LoginPasskeyPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const config = await getMfaConfig();
-  if (!config) redirect("/login");
-
-  if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
+  const { config, passed } = await requireMfaGate();
+  if (passed) redirect("/dashboard");
 
   if (!config.passkeyEnabled) {
     if (config.totpEnabled) redirect("/login/totp");

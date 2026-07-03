@@ -6,8 +6,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireFullyAuthed, getMfaConfig } from "@/lib/auth/rbac";
-import { clearEmail2faCookie } from "@/lib/auth/email-2fa-session";
-import { clearPasskey2faCookie } from "@/lib/auth/passkey-2fa-session";
+import { clearAal2Cookie } from "@/lib/auth/aal-cookie";
 import { deleteAllUserCredentials } from "@/lib/auth/webauthn";
 
 const MethodSchema = z.object({ method: z.enum(["totp", "email", "passkey"]) });
@@ -38,7 +37,7 @@ export async function toggleEmailMethodAction(
   }
   await admin.from("profiles").update(patch).eq("id", user.id);
 
-  if (!want) await clearEmail2faCookie();
+  if (!want) await clearAal2Cookie("email");
 
   revalidatePath("/dashboard/settings");
   return { success: want ? "Email code enabled." : "Email code disabled." };
@@ -90,7 +89,7 @@ export async function removePasskeyAction(
   }
 
   await deleteAllUserCredentials(user.id);
-  await clearPasskey2faCookie();
+  await clearAal2Cookie("passkey");
 
   if (config.preferred === "passkey") {
     const admin = createAdminClient();

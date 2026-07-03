@@ -7,23 +7,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { issueEmailOtp } from "@/lib/auth/email-otp";
-import { getMfaConfig, hasPassedSecondFactor } from "@/lib/auth/rbac";
+import { requireMfaGate } from "@/lib/auth/rbac";
 import { EmailCodeClient } from "./EmailCodeClient";
 
 export default async function LoginEmailPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const config = await getMfaConfig();
-  if (!config) redirect("/login");
-
-  if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
+  const { user, config, passed } = await requireMfaGate();
+  if (passed) redirect("/dashboard");
 
   if (!config.emailEnabled) {
     if (config.totpEnabled) redirect("/login/totp");
@@ -31,15 +21,7 @@ export default async function LoginEmailPage() {
     redirect("/onboarding/method");
   }
 
-  const admin = createAdminClient();
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("email")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!profile) redirect("/login");
-
-  const issued = await issueEmailOtp({ userId: user.id, email: profile.email });
+  const issued = await issueEmailOtp({ userId: user.id, email: user.email });
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
@@ -47,7 +29,7 @@ export default async function LoginEmailPage() {
         <CardHeader>
           <CardTitle>Check your email</CardTitle>
           <CardDescription>
-            We sent a code to <strong>{profile.email}</strong>. It expires in 10
+            We sent a code to <strong>{user.email}</strong>. It expires in 10
             minutes.
           </CardDescription>
         </CardHeader>

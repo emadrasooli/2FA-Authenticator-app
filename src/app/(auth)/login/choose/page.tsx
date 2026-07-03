@@ -8,22 +8,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getMfaConfig, hasPassedSecondFactor } from "@/lib/auth/rbac";
+import { requireMfaGate } from "@/lib/auth/rbac";
 import type { MfaMethod } from "@/lib/auth/rbac";
 
 export default async function LoginChoosePage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const config = await getMfaConfig();
-  if (!config) redirect("/login");
-
-  if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
+  const { user, config, passed } = await requireMfaGate();
+  if (passed) redirect("/dashboard");
 
   const enabledCount =
     (config.totpEnabled ? 1 : 0) +
@@ -36,13 +26,6 @@ export default async function LoginChoosePage() {
     if (config.emailEnabled) redirect("/login/email");
     redirect("/onboarding/method");
   }
-
-  const admin = createAdminClient();
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("email")
-    .eq("id", user.id)
-    .maybeSingle();
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
@@ -77,7 +60,7 @@ export default async function LoginChoosePage() {
               href="/login/email"
               icon={<Mail className="mt-0.5 h-5 w-5 text-primary" />}
               title="Email code"
-              subtitle={`Email a code to ${profile?.email ?? "your account"}.`}
+              subtitle={`Email a code to ${user.email}.`}
               featured={isPreferred(config.preferred, "email")}
             />
           )}
