@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { issueEmail2faCookie } from "@/lib/auth/email-2fa-session";
+import { issueAal2Cookie } from "@/lib/auth/aal-cookie";
 import { issueEmailOtp, verifyEmailOtp } from "@/lib/auth/email-otp";
 
 const CodeSchema = z.object({
@@ -42,7 +42,7 @@ export async function verifyEmailCodeAction(
     return { error: messages[result.reason] };
   }
 
-  await issueEmail2faCookie(user.id);
+  await issueAal2Cookie("email", user.id);
 
   const admin = createAdminClient();
   const { data: profile } = await admin

@@ -7,30 +7,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/server";
-import { getMfaConfig, hasPassedSecondFactor } from "@/lib/auth/rbac";
+import { requireMfaGate } from "@/lib/auth/rbac";
 import { VerifyClient } from "./VerifyClient";
 
 export default async function LoginTotpPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const { config, passed, totpFactor } = await requireMfaGate();
+  if (passed) redirect("/dashboard");
 
-  const config = await getMfaConfig();
-  if (!config) redirect("/login");
-
-  if (await hasPassedSecondFactor(user.id, config)) redirect("/dashboard");
-
-  if (!config.totpEnabled) {
+  if (!config.totpEnabled || !totpFactor) {
     if (config.passkeyEnabled) redirect("/login/passkey");
     if (config.emailEnabled) redirect("/login/email");
     redirect("/onboarding/method");
   }
-
-  const { data: factors } = await supabase.auth.mfa.listFactors();
-  const totp = factors?.totp?.[0]!;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
@@ -39,11 +27,11 @@ export default async function LoginTotpPage() {
           <CardTitle>Enter your 6-digit code</CardTitle>
           <CardDescription>
             Open your authenticator app and enter the code for{" "}
-            {totp.friendly_name ?? "this account"}.
+            {totpFactor.friendlyName ?? "this account"}.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <VerifyClient factorId={totp.id} />
+          <VerifyClient factorId={totpFactor.id} />
           <div className="space-y-1 text-center text-sm text-muted-foreground">
             {config.passkeyEnabled && (
               <p>

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { issueEmail2faCookie } from "@/lib/auth/email-2fa-session";
+import { issueAal2Cookie } from "@/lib/auth/aal-cookie";
 
 const ChooseSchema = z.object({ method: z.enum(["totp", "email"]) });
 
@@ -35,7 +35,7 @@ export async function chooseMethodAction(
 
   // Email method: invite already proves they own the inbox, so promote the
   // session to passed-2FA without sending another code.
-  await issueEmail2faCookie(user.id);
+  await issueAal2Cookie("email", user.id);
 
   const { data: profile } = await admin
     .from("profiles")

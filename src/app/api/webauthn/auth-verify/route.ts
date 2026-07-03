@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/types";
 import { verifyAuthentication } from "@/lib/auth/webauthn";
-import { issuePasskey2faCookie } from "@/lib/auth/passkey-2fa-session";
+import { issueAal2Cookie } from "@/lib/auth/aal-cookie";
 
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -29,6 +29,6 @@ export async function POST(req: Request) {
     );
   }
 
-  await issuePasskey2faCookie(user.id);
+  await issueAal2Cookie("passkey", user.id);
   return NextResponse.json({ ok: true });
 }
