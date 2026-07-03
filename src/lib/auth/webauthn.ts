@@ -21,11 +21,17 @@ async function persistChallenge(opts: {
   purpose: ChallengePurpose;
 }) {
   const admin = createAdminClient();
-  await admin.from("webauthn_challenges").insert({
+  const { error } = await admin.from("webauthn_challenges").insert({
     user_id: opts.userId,
     challenge: opts.challenge,
     purpose: opts.purpose,
   });
+  if (error) {
+    // Surface the real cause (missing table, RLS, etc.) instead of letting the
+    // options endpoint succeed and the later verify fail with a cryptic
+    // "No active registration challenge".
+    throw new Error(`Could not store WebAuthn challenge: ${error.message}`);
+  }
 }
 
 async function consumeChallenge(opts: {
@@ -33,7 +39,7 @@ async function consumeChallenge(opts: {
   purpose: ChallengePurpose;
 }): Promise<string | null> {
   const admin = createAdminClient();
-  const { data } = await admin
+  const { data, error } = await admin
     .from("webauthn_challenges")
     .select("id, challenge, expires_at, consumed_at")
     .eq("user_id", opts.userId)
@@ -42,12 +48,16 @@ async function consumeChallenge(opts: {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (error) {
+    throw new Error(`Could not read WebAuthn challenge: ${error.message}`);
+  }
   if (!data) return null;
-  if (new Date(data.expires_at).getTime() <= Date.now()) return null;
+  // Always consume (single-use) even if expired, so a stale row can't linger.
   await admin
     .from("webauthn_challenges")
     .update({ consumed_at: new Date().toISOString() })
     .eq("id", data.id);
+  if (new Date(data.expires_at).getTime() <= Date.now()) return null;
   return data.challenge;
 }
 
@@ -104,7 +114,9 @@ export async function verifyAndStoreRegistration(opts: {
     purpose: "register",
   });
   if (!expectedChallenge) {
-    throw new Error("No active registration challenge");
+    throw new Error(
+      "No active registration challenge — it may have expired. Please try again.",
+    );
   }
 
   const verification = await verifyRegistrationResponse({
@@ -122,7 +134,7 @@ export async function verifyAndStoreRegistration(opts: {
   const { credential } = verification.registrationInfo;
 
   const admin = createAdminClient();
-  await admin.from("webauthn_credentials").insert({
+  const { error: insertErr } = await admin.from("webauthn_credentials").insert({
     user_id: opts.userId,
     credential_id: credential.id,
     public_key: Buffer.from(credential.publicKey).toString("base64"),
@@ -130,6 +142,9 @@ export async function verifyAndStoreRegistration(opts: {
     transports: credential.transports ?? [],
     device_name: opts.deviceName ?? null,
   });
+  if (insertErr) {
+    throw new Error(`Could not save passkey: ${insertErr.message}`);
+  }
 
   return { ok: true as const };
 }
