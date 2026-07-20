@@ -131,21 +131,3 @@ supabase/migrations/
 ## What's not built (v1)
 
 Courses / assignments / grades, audit log UI, SSO with university IdP, multi-authenticator management UI, i18n. The auth foundation is the focus.
-
-
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://sjgjkdcacfoymobogvfe.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_h1_t-RR1btrw6b4V5ONDlg_LJ79tjF2
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqZ2prZGNhY2ZveW1vYm9ndmZlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwOTI3NjYsImV4cCI6MjA5NzY2ODc2Nn0.BhrfZw-W6hXowPDzjXFJAlFfnPyxQeVaCR9fi2Pd9Pc
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqZ2prZGNhY2ZveW1vYm9ndmZlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MjA5Mjc2NiwiZXhwIjoyMDk3NjY4NzY2fQ.b59muaF27m_W1jEA3_MCsRqgwsiUNrf1TG4MtnhI3Qc
-
-# App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-
-# Email (optional) — used to send invitation links.
-# Sign up at https://resend.com (free tier: 100 emails/day) and create an API key.
-# RESEND_FROM must use a verified domain in production. For dev, you can use
-# "onboarding@resend.dev" but Resend will only deliver to your own verified
-# Resend account email until you verify a domain.
-RESEND_API_KEY=re_fDSAaPU9_4BsPS2YJbsM3H3W2sm6AGx6P
-RESEND_FROM=onboarding@resend.dev
