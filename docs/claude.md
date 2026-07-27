@@ -76,7 +76,8 @@ src/
     api/
       auth/signout/
       webauthn/{register-options,register-verify,auth-options,auth-verify}/
-    auth/callback/                             # exchanges Supabase recovery code
+    auth/callback/                             # legacy PKCE code exchange
+    auth/confirm/                              # verifies email token_hash (recovery)
   lib/
     env.ts                                     # strict env loader; derives WebAuthn RP_* from APP_URL
     utils.ts                                   # cn()
@@ -176,10 +177,12 @@ HttpOnly. API: `issueAal2Cookie(method, userId)`, `verifyAal2Cookie(method, user
   redirects (`/login/choose` | `/login/totp` | `/login/email` | `/login/passkey`).
   Each challenge page verifies and, on success, promotes AAL2 (Supabase for
   TOTP; a signed cookie for email/passkey) then → dashboard.
-- **Password reset**: `/forgot-password` → Supabase `resetPasswordForEmail`
-  with `redirectTo=/auth/callback?next=/reset-password` → the callback exchanges
-  the code for a session → `/reset-password` sets the new password, signs out,
-  clears both AAL cookies → `/login?reset=ok`.
+- **Password reset**: `/forgot-password` → Supabase `resetPasswordForEmail`.
+  The hosted Supabase recovery template links to
+  `/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password`;
+  the route verifies the hash into a cookie-backed session without depending on
+  a browser-local PKCE verifier. `/reset-password` sets the new password, signs
+  out, clears both AAL cookies → `/login?reset=ok`.
 - **Sign out**: `POST /api/auth/signout` clears both AAL cookies first, then
   Supabase `signOut`. `ProfileMenu` calls it, then a local client signOut. A
   confirmation dialog gates the action.
@@ -227,6 +230,8 @@ key is imported only in `supabase/admin.ts` and `aal-cookie.ts` (both
    `http://localhost:3000/auth/callback` to Redirect URLs.
 6. Supabase → Authentication → Emails → Templates → **Magic Link**: set the body
    to contain `{{ .Token }}` (the app's email-OTP flows want a code, not a link).
+   In the **Reset Password** template, make the reset button/link target
+   `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password`.
 7. Seed the first admin: create the user (Authentication → Users, Auto Confirm),
    then
    `insert into public.profiles (id, full_name, email, role) select id, 'Site Admin', email, 'admin' from auth.users where email = '<you>' on conflict (id) do nothing;`
