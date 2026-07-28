@@ -1,309 +1,758 @@
-# University 2FA Authenticator — Project Reference
+# University 2FA Authenticator — AI Agent Context
 
-> **Purpose.** A single, paste-able reference so any AI assistant (or new
-> developer) can get fully up to speed without reading every file. Paste the
-> whole thing as context. If anything here disagrees with the code, the code
-> wins — update this file in the same change.
+This file is an operational context document for AI coding agents. It is not
+end-user documentation. Read it before modifying authentication, authorization,
+email, database, WebAuthn, deployment, or environment configuration.
 
----
+Authority order:
 
-## 1. What this project is
+1. Current source code and SQL migrations.
+2. This document.
+3. `README.md`, which may describe an older implementation.
 
-An **invite-only** sign-in / sign-up web app for a university portal. Users
-have one of three roles — `admin`, `teacher`, `student` — and land on a
-role-specific dashboard after clearing two-factor authentication.
-
-**Three independent second-factor methods**, each toggled on/off per user:
-
-1. **Authenticator app (TOTP)** — Google Authenticator, Authy, 1Password, etc.
-   Backed by **Supabase's built-in MFA** (`auth.mfa_factors`, `supabase.auth.mfa.*`).
-2. **Email code** — a 6-digit code emailed via **Resend** each sign-in. Hashed
-   (SHA-256) in `public.email_otp_challenges`; success sets a signed cookie.
-3. **Passkey / fingerprint (WebAuthn)** — Windows Hello, Touch ID, Android
-   biometric, or a USB security key. Built on `@simplewebauthn/*`. Credentials
-   in `public.webauthn_credentials`; success sets a signed cookie.
-
-Rules: a user must keep **at least one** method enabled. `profiles.mfa_method`
-is the **default** shown first at login when more than one is enabled.
-
-Password reset (separate from 2FA) is handled via Supabase's email recovery
-link. There's no dedicated "lost 2FA" wipe flow — the other enabled method(s)
-serve as the fallback, and methods are managed from Settings.
+If code behavior changes, update this file in the same change.
 
 ---
 
-## 2. Stack
+## 1. System identity
 
-| Concern | Choice |
-|---|---|
-| Framework | **Next.js 16** (App Router, Turbopack default) + TypeScript, React 19.2 |
-| Backend | All in-app: Server Actions + Route Handlers |
-| Auth/DB | **Supabase** (Postgres + Auth + MFA + RLS) — free tier |
-| Email | **Resend** free tier (invites + email-OTP). Also wired as Supabase's custom SMTP so Supabase-native emails (password reset, magic links) go through Resend too. |
-| WebAuthn | `@simplewebauthn/server` + `@simplewebauthn/browser` |
-| UI | Tailwind CSS (CSS-variable tokens, dark mode), hand-rolled `components/ui`, Inter font, `next-themes` |
-| Hosting | **Vercel Hobby** (free) |
+The repository implements an invite-only university portal authentication
+foundation. It does not yet implement courses, grades, enrollment, or other
+academic workflows.
 
-Everything targets a $0 running cost.
+Users have exactly one application role:
+
+- `admin`
+- `teacher`
+- `student`
+
+Authentication has two conceptual levels:
+
+- **AAL1:** Supabase email/password session.
+- **AAL2 equivalent:** the current session has passed at least one enabled
+  second-factor method.
+
+Supported second factors:
+
+| Method | Authority and persistence | Session proof |
+|---|---|---|
+| TOTP authenticator | Supabase MFA (`auth.mfa_factors`) | Supabase session at `aal2` |
+| Email OTP | App-generated challenge in `public.email_otp_challenges`; sent through Resend | Signed `email_2fa` cookie |
+| Passkey/WebAuthn | App tables `webauthn_credentials` and `webauthn_challenges` | Signed `passkey_2fa` cookie |
+
+At least one method must remain enabled. `profiles.mfa_method` is a preference,
+not the complete enabled-method state.
+
+There is no self-service recovery when TOTP is the only enabled method and the
+user loses it. A user who retains email OTP or a passkey can authenticate with
+that fallback, remove the old TOTP factor in Settings, and enroll a new one.
 
 ---
 
-## 3. Repository layout
+## 2. Technology snapshot
 
+- Next.js 16 App Router using the Next 16 `proxy.ts` convention
+- React 19.2 and TypeScript with strict checking
+- Tailwind CSS 3 and small repository-local UI primitives
+- Supabase Auth, Postgres, MFA, SSR clients, and RLS
+- Resend SDK for application-owned email
+- Resend SMTP for Supabase-owned authentication email
+- `@simplewebauthn/server` and `@simplewebauthn/browser`
+- Vercel Hobby hosting
+- deSEC DNS with a free `dedyn.io` zone
+
+Package versions are governed by `package.json` and `package-lock.json`; do not
+rely on version numbers copied into this document.
+
+---
+
+## 3. Current production topology
+
+Current public application origin:
+
+```text
+https://www.university-portal.dedyn.io
 ```
+
+The browser may visually hide the `www` prefix. Configuration must still use
+the full origin above.
+
+Infrastructure map:
+
+```text
+                                ┌──────────────────────────────┐
+                                │ deSEC authoritative DNS     │
+                                │ university-portal.dedyn.io  │
+                                │                              │
+Browser ── DNS lookup ─────────▶│ www CNAME → Vercel          │
+                                │ DKIM/SPF/MX/DMARC → Resend   │
+                                └──────────────┬───────────────┘
+                                               │
+                                               ▼
+┌──────────────┐ HTTPS  ┌────────────────────────────────────────────┐
+│ User browser │───────▶│ Vercel: Next.js application               │
+└──────────────┘        │ Server Components, Actions, Route Handlers │
+                        └──────────────┬─────────────────┬───────────┘
+                                       │                 │
+                         Auth/DB/MFA   │                 │ HTTPS API
+                                       ▼                 ▼
+                        ┌────────────────────┐   ┌──────────────────┐
+                        │ Supabase          │   │ Resend           │
+                        │ Auth + Postgres   │   │ invites + OTPs   │
+                        └─────────┬──────────┘   └─────────┬────────┘
+                                  │ SMTP                    │ email
+                                  │ smtp.resend.com         │
+                                  └──────────────▶ Resend ───┘
+                                                        │
+                                                        ▼
+                                                 Recipient inbox
+```
+
+### DNS facts
+
+The deSEC zone is `university-portal.dedyn.io`.
+
+- `www` is a CNAME to the Vercel-provided project target.
+- The root `dedyn.io` hostname is not used for web hosting. deSEC rejected the
+  Vercel apex A address, so the production application uses `www`.
+- `resend._domainkey` TXT authenticates Resend DKIM.
+- `send` MX and TXT records provide Resend return-path/SPF configuration.
+- `_dmarc` TXT currently uses a monitoring policy (`p=none`).
+- Resend has verified `university-portal.dedyn.io` for sending.
+
+Do not replace the Vercel CNAME with a hard-coded value from this document.
+Read the exact active target from Vercel before changing DNS.
+
+### Shared database warning
+
+Development and production currently use the same Supabase project/database.
+Treat local writes, migrations, test users, invitation consumption, factor
+deletion, and cleanup as production-affecting operations. Never assume local
+testing is isolated.
+
+---
+
+## 4. Email ownership and delivery map
+
+There are two independent email pipelines. Debug them separately.
+
+### Pipeline A: Vercel application → Resend API
+
+Used for:
+
+- Admin invitation emails.
+- Six-digit email second-factor codes.
+
+Path:
+
+```text
+Server Action / Server Component
+  → src/lib/email.ts
+  → Resend HTTPS API using RESEND_API_KEY
+  → recipient
+```
+
+Call sites:
+
+- `src/app/(dashboard)/dashboard/admin/invitations/actions.ts`
+- `src/lib/auth/email-otp.ts`
+
+Required Vercel variables:
+
+- `RESEND_API_KEY`
+- `RESEND_FROM`, currently expected to use a sender such as
+  `University Portal <auth@university-portal.dedyn.io>`
+
+An invalid Vercel key produces an application warning such as `API key is
+invalid`. Changing Supabase SMTP does not fix Pipeline A.
+
+### Pipeline B: Supabase Auth → Resend SMTP
+
+Used for:
+
+- Password recovery.
+- Any other Supabase-native authentication email enabled later.
+
+Path:
+
+```text
+Supabase Auth
+  → smtp.resend.com:465
+  → Resend using SMTP password/API key
+  → recipient
+```
+
+Supabase SMTP settings:
+
+```text
+Sender address: auth@university-portal.dedyn.io
+Sender name:    University Portal
+Host:           smtp.resend.com
+Port:           465
+Username:       resend
+Password:       a valid Resend API key
+```
+
+Changing Vercel `RESEND_API_KEY` does not automatically update Supabase SMTP.
+When rotating the key, update both systems if they intentionally share it.
+
+### Resend sandbox constraint
+
+`onboarding@resend.dev` can send only to the email address attached to the
+Resend account. Production must use the verified
+`university-portal.dedyn.io` sender.
+
+---
+
+## 5. Repository map
+
+```text
 src/
   app/
-    layout.tsx                                 # Inter font + ThemeProvider
-    page.tsx                                   # public landing
+    layout.tsx
+    page.tsx
     (auth)/
-      login/                                   # email + password  (dispatches by config)
-      login/choose/                            # pick a method when 2+ enabled
-      login/totp/                              # authenticator code
-      login/email/                             # email code (issues on render)
-      login/passkey/                           # WebAuthn assertion
-      signup/                                  # invite-token signup
-      onboarding/method/                       # first choice of default method
-      onboarding/totp/                         # first TOTP enrollment
-      forgot-password/ , forgot-password?..    # request password reset
-      reset-password/                          # set new password (recovery session)
+      login/
+        actions.ts                    # password sign-in and factor dispatch
+        choose/                       # method choice when multiple are enabled
+        email/                        # issue and verify app-owned email OTP
+        totp/                         # Supabase MFA challenge and verify
+        passkey/                      # browser WebAuthn assertion
+      signup/                         # consume application invitation
+      onboarding/
+        method/                       # initial TOTP/email choice
+        totp/                         # initial Supabase TOTP enrollment
+      forgot-password/                # request Supabase recovery email
+      reset-password/                 # update password in recovery session
     (dashboard)/
-      layout.tsx                               # header: ProfileMenu + ThemeToggle
-      dashboard/{admin,teacher,student}/
-      dashboard/admin/invitations/
-      dashboard/settings/                      # manage the 3 methods + default
-      dashboard/settings/authenticator/        # enroll TOTP
-      dashboard/settings/passkey/              # enroll passkey
+      layout.tsx                      # fully-authenticated shell
+      dashboard/
+        page.tsx                      # role redirect
+        admin/
+          page.tsx
+          invitations/               # create and list invitations
+        teacher/page.tsx
+        student/page.tsx
+        settings/
+          actions.ts                  # factor/default mutations
+          authenticator/              # TOTP enrollment from Settings
+          passkey/                    # WebAuthn registration from Settings
     api/
-      auth/signout/
-      webauthn/{register-options,register-verify,auth-options,auth-verify}/
-    auth/callback/                             # legacy PKCE code exchange
-    auth/confirm/                              # verifies email token_hash (recovery)
-  lib/
-    env.ts                                     # strict env loader; derives WebAuthn RP_* from APP_URL
-    utils.ts                                   # cn()
-    email.ts                                   # Resend sender + invite template
-    supabase/{client,server,admin,middleware}.ts
+      auth/signout/                   # clear custom AAL cookies + Supabase
+      webauthn/
+        register-options/
+        register-verify/
+        auth-options/
+        auth-verify/
     auth/
-      rbac.ts                                  # loadGate + requireMfaGate/requireFullyAuthed/requireRole
-      aal-cookie.ts                            # unified signed AAL2 cookie (email | passkey)
-      email-otp.ts                             # 6-digit email code issue/verify
-      webauthn.ts                              # WebAuthn options/verify + credential I/O
+      confirm/                        # token_hash verification; preferred email flow
+      callback/                       # legacy PKCE code exchange
   components/
-    ProfileMenu.tsx  ThemeProvider.tsx  ThemeToggle.tsx
-    ui/{button,card,input,label,password-input}.tsx
-  proxy.ts                                     # Next 16 "proxy" convention (was middleware.ts): session refresh + public-path guard
+    ProfileMenu.tsx
+    ThemeProvider.tsx
+    ThemeToggle.tsx
+    ui/
+  lib/
+    env.ts
+    email.ts
+    auth/
+      rbac.ts                         # authoritative auth gate and redirects
+      aal-cookie.ts                   # signed email/passkey AAL proof
+      email-otp.ts                    # app-owned OTP lifecycle
+      webauthn.ts                     # WebAuthn ceremonies and persistence
+    supabase/
+      client.ts                       # browser client
+      server.ts                       # cookie-backed server client
+      admin.ts                        # service-role client; server-only
+      middleware.ts                   # session refresh used by proxy
+  proxy.ts                            # coarse public/authenticated routing
+  styles/globals.css
 supabase/migrations/
-  0001_init.sql                                # profiles, invitations, RLS (+ legacy webauthn tables)
-  0002_switch_to_totp.sql                      # drops the original passkey/auth_sessions tables
-  0003_method_choice_and_email_otp.sql         # profiles.mfa_method + email_otp_challenges
-  0004_independent_2fa_toggles.sql             # profiles.email_2fa_enabled
-  0005_passkey_2fa.sql                         # webauthn_credentials + webauthn_challenges, mfa_method += 'passkey'
-docs/claude.md                                 # this file
-.env.example
+  0001_init.sql
+  0002_switch_to_totp.sql
+  0003_method_choice_and_email_otp.sql
+  0004_independent_2fa_toggles.sql
+  0005_passkey_2fa.sql
 ```
 
-> **Note on the migration history:** `0001` originally created WebAuthn tables
-> for a first-attempt passkey design; `0002` dropped them when the app switched
-> to TOTP. `0005` re-introduces WebAuthn with a different schema. Run all five in
-> order on a fresh project.
+Migration history is intentionally non-linear:
+
+- `0001` contains an obsolete first WebAuthn design.
+- `0002` removes those tables when the project switched to TOTP.
+- `0005` adds the current WebAuthn schema.
+
+On a new database, apply all migrations in numerical order.
 
 ---
 
-## 4. Database schema (all RLS-enabled)
+## 6. Data model and ownership
 
-- **`public.profiles`** (1:1 with `auth.users`)
-  - `id uuid PK`, `full_name`, `email citext unique`
-  - `role text check ('admin'|'teacher'|'student')`
-  - `mfa_method text check ('totp'|'email'|'passkey')` — the *default* at login
-  - `email_2fa_enabled boolean default true`
-  - Policies: self-read (or admin), self-update.
-- **`public.invitations`** — single-use, 7-day tokens. Admin-only policy.
-- **`public.email_otp_challenges`** — `code_hash` (SHA-256), `attempts`,
-  `expires_at`, `consumed_at`. **Server-only** (RLS on, no policies).
-- **`public.webauthn_credentials`** — `credential_id`, `public_key` (base64),
-  `counter`, `transports`, `device_name`. **Server-only.**
-- **`public.webauthn_challenges`** — `challenge`, `purpose ('register'|'authenticate')`,
-  `expires_at`, `consumed_at`. **Server-only.**
+All application tables have RLS enabled.
 
-"Enabled" is derived, not just a flag:
-- TOTP enabled ⇔ a verified factor exists in `auth.mfa_factors`.
-- Passkey enabled ⇔ ≥1 row in `webauthn_credentials`.
-- Email enabled ⇔ `profiles.email_2fa_enabled = true`.
+### `public.profiles`
 
----
+One row per `auth.users` row.
 
-## 5. Auth model & routing
+Relevant fields:
 
-### The gate (`src/lib/auth/rbac.ts`)
+- `id uuid` referencing `auth.users(id)` with cascade delete
+- `full_name`
+- `email citext unique`
+- `role`: `admin | teacher | student`
+- `mfa_method`: `totp | email | passkey`
+- `email_2fa_enabled boolean`
 
-`loadGate()` does a **single pass** — one `getUser()` (a network round-trip to
-Supabase), one profile query, one `listFactors()`, one AAL check — and returns
-`{ user, config, passed, totpFactor }`:
+RLS permits self-read/self-update and admin reads. Privileged server operations
+often use the service-role client.
 
-- `config`: `{ totpEnabled, emailEnabled, passkeyEnabled, preferred }`.
-- `passed`: true iff the session cleared 2FA via a **currently-enabled** method:
-  - TOTP → Supabase `aal.currentLevel === 'aal2'`, OR
-  - email → valid `email_2fa` cookie, OR
-  - passkey → valid `passkey_2fa` cookie.
-  A signal from a method the user has since disabled does **not** count.
+### `public.invitations`
 
-Public helpers:
-- `requireMfaGate()` — used by the login challenge pages; returns the gate or
-  redirects to `/login`.
-- `requireFullyAuthed()` — returns the `SessionUser` if `passed`, else redirects
-  to the right challenge via `chooseDispatch()`.
-- `requireRole(role)` — `requireFullyAuthed` + role check (wrong role → user's
-  own dashboard).
-- `getMfaConfig()` — config only, for the settings screens.
-- `loginRedirectFor(config)` — used by the login action.
+- Random, single-use token.
+- Seven-day default lifetime.
+- `used_at` is independent of whether a user is later deleted.
+- Deleting a Supabase Auth user does not reset or remove an invitation.
+- Duplicate invitation rows for the same email are currently allowed.
+- Admin-only policy.
 
-`chooseDispatch(config)`: 0 enabled → `/onboarding/method`; 2+ enabled →
-`/login/choose`; exactly one → that method's page.
+Signup order matters:
 
-### AAL2 cookies (`src/lib/auth/aal-cookie.ts`)
+1. Validate invitation.
+2. Create auto-confirmed Supabase Auth user.
+3. Insert profile.
+4. Mark invitation used.
+5. Sign the new user in.
+6. Redirect to method onboarding.
 
-One parameterized module for the email and passkey methods (TOTP uses Supabase
-AAL). Cookie value: `<userId>.<expiryMs>.<nonce>.<hmac>`, HMAC-SHA-256 keyed by
-`SUPABASE_SERVICE_ROLE_KEY`, verified with `timingSafeEqual`, 12-hour TTL,
-HttpOnly. API: `issueAal2Cookie(method, userId)`, `verifyAal2Cookie(method, userId)`,
-`clearAal2Cookie(method)` where `method` is `'email' | 'passkey'`.
+If an error occurs after step 4, reopening the link correctly reports it as
+used. Inspect Auth users, profiles, and Vercel logs before deleting state.
 
-### Flows
+### `public.email_otp_challenges`
 
-- **Signup**: admin creates an invite (`invitations`, emailed via Resend) →
-  `/signup?token=…` → set name+password → `/onboarding/method` → pick default →
-  TOTP enrolls at `/onboarding/totp`; email is on by default → dashboard.
-- **Login**: `/login` (password) → `loginAction` computes the enabled set and
-  redirects (`/login/choose` | `/login/totp` | `/login/email` | `/login/passkey`).
-  Each challenge page verifies and, on success, promotes AAL2 (Supabase for
-  TOTP; a signed cookie for email/passkey) then → dashboard.
-- **Password reset**: `/forgot-password` → Supabase `resetPasswordForEmail`.
-  The hosted Supabase recovery template links to
-  `/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password`;
-  the route verifies the hash into a cookie-backed session without depending on
-  a browser-local PKCE verifier. `/reset-password` sets the new password, signs
-  out, clears both AAL cookies → `/login?reset=ok`.
-- **Sign out**: `POST /api/auth/signout` clears both AAL cookies first, then
-  Supabase `signOut`. `ProfileMenu` calls it, then a local client signOut. A
-  confirmation dialog gates the action.
+- Server-only: RLS enabled with no authenticated policies.
+- Stores SHA-256 code hash, not plaintext code.
+- Ten-minute expiry from database default.
+- Maximum five failed attempts.
+- Issuing a new code deletes outstanding unconsumed challenges first.
 
-### Settings (`/dashboard/settings`, all roles)
+### `public.webauthn_credentials`
 
-Three cards — Passkey, Authenticator, Email — each with enable/disable (or
-enroll/remove). Enabling TOTP/passkey routes to the enroll page (with
-`?primary=1` when chosen as the default). A "Default at sign-in" picker appears
-when ≥2 methods are enabled. Every mutation enforces "keep at least one method"
-and, if the removed method was the default, moves `mfa_method` to another
-enabled one; disabling email or removing passkey also clears that AAL cookie.
+- Server-only.
+- Stores credential id, base64 public key, signature counter, transports,
+  optional device name, and timestamps.
+- Current UI treats one or more rows as “passkey enabled.”
+- Removing passkey currently deletes all user credentials.
+
+### `public.webauthn_challenges`
+
+- Server-only and single-use.
+- Purpose is `register` or `authenticate`.
+- Application computes and validates expiry using its own clock to avoid
+  app/database clock-skew failures.
+
+### Supabase-owned auth data
+
+- Passwords and sessions live in Supabase Auth.
+- TOTP factors live in Supabase `auth.mfa_factors`.
+- Never attempt to store or duplicate TOTP secrets in public application tables.
 
 ---
 
-## 6. Environment variables
+## 7. Authentication gate: authoritative behavior
 
-| name | required | purpose |
+`src/lib/auth/rbac.ts` is the central access-control module.
+
+`loadGate()` loads:
+
+- authenticated Supabase user via `getUser()`
+- application profile
+- Supabase MFA factors
+- Supabase authenticator assurance level
+- existence of a WebAuthn credential
+- signed email/passkey AAL cookies
+
+Derived method state:
+
+```text
+totpEnabled    = at least one verified Supabase TOTP factor
+emailEnabled   = profiles.email_2fa_enabled
+passkeyEnabled = at least one WebAuthn credential row
+preferred      = profiles.mfa_method
+```
+
+The gate passes when any currently enabled method has valid session proof:
+
+```text
+(totpEnabled    && Supabase currentLevel === "aal2")
+OR
+(emailEnabled   && valid email_2fa cookie)
+OR
+(passkeyEnabled && valid passkey_2fa cookie)
+```
+
+A stale cookie from a disabled method does not pass the gate.
+
+Dispatch:
+
+```text
+0 enabled methods → /onboarding/method
+1 enabled method  → that method's challenge
+2–3 methods       → /login/choose
+```
+
+Helpers:
+
+- `requireMfaGate()` is for second-factor pages.
+- `requireFullyAuthed()` protects general dashboard content.
+- `requireRole()` protects role-specific content.
+- `getMfaConfig()` loads Settings state.
+- `loginRedirectFor()` exposes dispatch to the login action.
+
+`proxy.ts` is not the security boundary. It refreshes Supabase cookies and
+performs coarse “session exists” routing. Page/Action/Route code must still use
+the server-side gate appropriate to the operation.
+
+---
+
+## 8. Session and cookie model
+
+Supabase manages AAL1 cookies and native TOTP AAL2.
+
+Email and passkey methods use custom signed cookies from
+`src/lib/auth/aal-cookie.ts`:
+
+```text
+<userId>.<expiryMs>.<nonce>.<HMAC-SHA256>
+```
+
+Properties:
+
+- Separate names: `email_2fa`, `passkey_2fa`
+- HMAC key: `SUPABASE_SERVICE_ROLE_KEY`
+- TTL: 12 hours
+- `HttpOnly`
+- `SameSite=Lax`
+- `Secure` in production
+- constant-time signature comparison
+
+Operational implication: rotating `SUPABASE_SERVICE_ROLE_KEY` invalidates all
+custom AAL cookies in addition to affecting admin API access.
+
+Sign-out and password-reset completion clear both custom cookies.
+
+---
+
+## 9. End-to-end flows
+
+### Invitation and signup
+
+```text
+Admin AAL2 session
+  → create invitation row
+  → build link from NEXT_PUBLIC_APP_URL
+  → send through Resend API
+  → recipient opens /signup?token=...
+  → create Auth user + profile
+  → consume invitation
+  → password sign-in
+  → /onboarding/method
+```
+
+Email is enabled by default at the schema level. Initial onboarding UI offers
+TOTP or email, not passkey. Passkey can be enrolled later in Settings.
+
+### Password login and second factor
+
+```text
+/login
+  → signInWithPassword (AAL1)
+  → derive enabled methods
+  → one method: direct challenge
+  → multiple methods: /login/choose
+  → successful factor proof
+  → role dashboard
+```
+
+The `next` form value is currently parsed but not honored by `loginAction`;
+successful login dispatches by MFA state.
+
+### Email OTP
+
+Visiting `/login/email` issues an OTP during server rendering. Refreshing or
+re-entering the page may invalidate the previous code and send another email.
+The resend action also issues a new challenge. There is no application-level
+rate limiter.
+
+Successful verification consumes the challenge, issues `email_2fa`, and routes
+to the role dashboard.
+
+### TOTP
+
+Enrollment and login call `getUser()` before `supabase.auth.mfa.*`. Preserve
+that ordering; current Supabase clients warn or reject insecure session use
+otherwise.
+
+### Passkey
+
+Registration/authentication options are generated server-side, persisted as
+single-use challenges, completed in the browser, and verified server-side.
+
+WebAuthn identity is origin-bound. Production configuration must match the
+actual `www` origin exactly.
+
+### Password recovery
+
+Request:
+
+```text
+/forgot-password
+  → Supabase resetPasswordForEmail()
+  → Supabase sends through Resend SMTP
+```
+
+Required Supabase **Reset Password** email template link:
+
+```html
+<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password">
+  Reset password
+</a>
+```
+
+Confirmation:
+
+```text
+/auth/confirm
+  → validate type and local next path
+  → verifyOtp(token_hash, recovery)
+  → set cookie-backed recovery session
+  → /reset-password
+  → update password
+  → sign out and clear custom AAL cookies
+  → /login?reset=ok
+```
+
+`/auth/confirm` is preferred because token-hash verification is not coupled to
+a PKCE verifier stored in the browser that requested the email. It works when
+the email is opened in another browser or device.
+
+`/auth/callback` remains as a legacy PKCE code-exchange route. Do not point the
+Reset Password template at it. A missing verifier produces `PKCE code verifier
+not found in storage`.
+
+---
+
+## 10. Settings invariants
+
+`src/app/(dashboard)/dashboard/settings/actions.ts` must preserve:
+
+- The user always has at least one enabled method.
+- A disabled/removed preferred method is replaced with another enabled method.
+- Disabling email clears `email_2fa`.
+- Removing passkeys clears `passkey_2fa`.
+- TOTP deletion uses the Supabase admin MFA API.
+- Passkey deletion currently removes all credentials.
+- Mutations require a fully authenticated user before service-role writes.
+
+Do not move these invariants solely into client-side button state.
+
+---
+
+## 11. Environment contract
+
+| Variable | Runtime | Meaning |
 |---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Supabase **anon** JWT (Legacy API Keys tab) |
-| `SUPABASE_SERVICE_ROLE_KEY` | yes | Supabase **service_role** JWT. Server-only. Also the HMAC key for AAL2 cookies. |
-| `NEXT_PUBLIC_APP_URL` | yes | Public origin, e.g. `http://localhost:3000` |
-| `RESEND_API_KEY` | optional | If unset, invites/email-OTP are disabled (invite link shown in UI with a warning). |
-| `RESEND_FROM` | optional | Sender. `onboarding@resend.dev` in dev (delivers only to your Resend-account email); a verified domain in prod. |
-| `NEXT_PUBLIC_RP_ID` / `_NAME` / `_ORIGIN` | optional | WebAuthn relying-party. **Auto-derived** from `APP_URL` (`RP_ID` = hostname, `RP_ORIGIN` = APP_URL) — only override for unusual hosting. |
+| `NEXT_PUBLIC_SUPABASE_URL` | public/server | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public/server | Supabase legacy anon JWT used by current code |
+| `SUPABASE_SERVICE_ROLE_KEY` | server only | Admin Supabase operations and custom AAL HMAC secret |
+| `NEXT_PUBLIC_APP_URL` | public/server | Canonical origin used in invitation/recovery links |
+| `RESEND_API_KEY` | server only | Pipeline A Resend API authorization |
+| `RESEND_FROM` | server only | Pipeline A verified sender |
+| `NEXT_PUBLIC_RP_ID` | optional public | WebAuthn RP ID override |
+| `NEXT_PUBLIC_RP_NAME` | optional public | WebAuthn display name |
+| `NEXT_PUBLIC_RP_ORIGIN` | optional public | WebAuthn expected origin override |
 
-`src/lib/env.ts` throws at import if a required var is missing. The service-role
-key is imported only in `supabase/admin.ts` and `aal-cookie.ts` (both
-`server-only`).
+Production canonical values:
 
----
+```text
+NEXT_PUBLIC_APP_URL=https://www.university-portal.dedyn.io
+NEXT_PUBLIC_RP_ID=www.university-portal.dedyn.io
+NEXT_PUBLIC_RP_ORIGIN=https://www.university-portal.dedyn.io
+```
 
-## 7. Setup (fresh)
+`env.ts` derives RP ID and origin from APP URL when overrides are absent. Avoid
+setting stale explicit overrides.
 
-1. `npm install`.
-2. Create a Supabase project (pick a reachable region — avoid ones your network
-   blocks). Run migrations `0001` → `0005` in order in the SQL editor.
-3. `cp .env.example .env.local`; fill Supabase keys (Legacy anon + service_role).
-4. (Optional) Resend key + `RESEND_FROM`. For arbitrary recipients, verify a
-   domain; for Supabase-native emails, also set Resend as custom SMTP under
-   Authentication → Emails → SMTP Settings (host `smtp.resend.com`, port 465,
-   user `resend`, password = API key).
-5. Supabase → Authentication → URL Configuration: add
-   `http://localhost:3000/auth/callback` to Redirect URLs.
-6. Supabase → Authentication → Emails → Templates → **Magic Link**: set the body
-   to contain `{{ .Token }}` (the app's email-OTP flows want a code, not a link).
-   In the **Reset Password** template, make the reset button/link target
-   `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password`.
-7. Seed the first admin: create the user (Authentication → Users, Auto Confirm),
-   then
-   `insert into public.profiles (id, full_name, email, role) select id, 'Site Admin', email, 'admin' from auth.users where email = '<you>' on conflict (id) do nothing;`
-8. Dev: `npm run dev`. Fast local production: `npm run build && npm run start`.
-9. Deploy: import on Vercel, set the env vars (production `APP_URL`), and add the
-   prod `/auth/callback` to Supabase Redirect URLs.
+The repository currently expects `NEXT_PUBLIC_SUPABASE_ANON_KEY`, not
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, even if both exist in a local env file.
+
+Vercel environment changes require a redeployment to affect an existing
+production build.
+
+Never expose:
+
+- service-role keys
+- Resend API keys
+- deSEC update/authorization tokens
+- invitation tokens before intended delivery
+- WebAuthn challenge payloads in logs
 
 ---
 
-## 8. Gotchas learned the hard way
+## 12. Supabase dashboard contract
 
-- **Legacy vs new Supabase keys.** The app reads `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  (a JWT starting `eyJ…`), not the new `sb_publishable_…` key. Using the wrong
-  one breaks auth with "Invalid credentials"/"Invalid API key".
-- **Project mismatch.** `.env.local` URL + keys must all be from the same
-  Supabase project as where you ran the SQL and created the admin.
-- **Clock skew.** WebAuthn challenge expiry is computed and checked in the app
-  process's own clock (see `webauthn.ts`) precisely because a machine whose
-  clock differs from Supabase's by minutes otherwise makes fresh challenges look
-  expired. Keep dev machines time-synced anyway (also matters for JWT validity).
-- **Resend sandbox** (`onboarding@resend.dev`) only delivers to your own
-  Resend-account email. Verify a domain to email anyone else.
-- **`supabase.auth.getUser()` before `auth.mfa.*`.** supabase-js warns
-  ("insecure session") if MFA calls run on a client that hasn't authenticated
-  the session first. The single-pass `loadGate()` calls `getUser()` up front.
-- **Secure cookies on localhost.** `npm run start` sets `NODE_ENV=production`,
-  which flips AAL cookies to `secure`. Browsers treat `localhost` as secure so
-  it's usually fine; a non-localhost HTTP host would drop them.
+URL Configuration:
 
----
+```text
+Site URL:
+https://www.university-portal.dedyn.io
 
-## 9. Security notes
+Allowed redirect URLs:
+https://www.university-portal.dedyn.io/auth/callback
+http://localhost:3000/auth/callback
+```
 
-- RLS on every table; server-only tables (email/webauthn challenges,
-  credentials) have **no** policies (service-role only).
-- Service-role key confined to `server-only` modules; never in a client bundle.
-- Email OTP hashed at rest, 5-attempt cap, 10-min expiry. AAL cookies are
-  HMAC-signed with a per-cookie nonce and `timingSafeEqual` verification.
-- Role checks run server-side on every render via `requireRole()`; `proxy.ts`
-  only refreshes the session and gates public vs authenticated paths.
-- No user enumeration on password reset (always shows the "sent" state).
+The token-hash recovery link uses `.SiteURL` and `/auth/confirm`; keep the Site
+URL accurate even though `/auth/confirm` does not depend on the redirect allow
+list in the same way as PKCE.
+
+Custom SMTP must remain enabled with the verified sender and valid Resend key.
+The Reset Password template must use the token-hash URL documented above.
+
+All migrations `0001` through `0005` are reported as applied to the active
+Supabase project.
 
 ---
 
-## 10. Known gaps / next steps
+## 13. Security boundaries
 
-- No automated tests.
-- No rate limiting on `/login`, `/login/email`, `/forgot-password` (relies on
-  Supabase's built-in limits) — add Upstash/Vercel KV for production.
-- No admin **users** management UI (only invitations).
-- Passkeys are per-device by nature; multi-device users register one each.
-- Course/enrollment/grade features, audit log, SSO, i18n are all out of scope.
+- Never import `src/lib/supabase/admin.ts` into a Client Component.
+- Keep `server-only` on service-role and cryptographic modules.
+- Never trust role, user id, factor id, method state, or redirect destination
+  supplied only by the client.
+- Use `getUser()`, not `getSession()`, as the server authorization source.
+- Validate redirect paths as local paths; reject `//host` and absolute URLs.
+- Challenge tables intentionally have RLS enabled and no user policies.
+- Email OTP values must remain hashed at rest.
+- WebAuthn challenges must remain single-use.
+- Invitation links are bearer credentials; do not log them unnecessarily.
+- Password-reset responses intentionally avoid account enumeration.
+
+Server Actions may use the service role only after authenticating and
+authorizing the caller with `requireFullyAuthed()` or `requireRole()`.
 
 ---
 
-## 11. Common tasks → where to start
+## 14. Diagnostics decision tree
 
-| Task | Start here |
+### Invitation or email OTP says “API key is invalid”
+
+Check Pipeline A:
+
+1. Vercel `RESEND_API_KEY`
+2. variable applies to Production
+3. production was redeployed
+4. key has sending access to the verified domain
+5. `RESEND_FROM` uses the verified domain
+6. Resend API logs
+
+Do not debug Supabase SMTP for this error.
+
+### Password reset email is not sent
+
+Check Pipeline B:
+
+1. Supabase custom SMTP enabled
+2. SMTP password is a valid Resend key
+3. sender is `@university-portal.dedyn.io`
+4. Resend logs
+5. Supabase Auth logs and rate limits
+
+### Recovery link returns PKCE verifier error
+
+The email used an old template/link or an old already-sent message. Confirm the
+Reset Password template uses `/auth/confirm` with `.TokenHash`, then request a
+new email. Previously sent links do not change when the template changes.
+
+### Invitation says invalid after signup crashed
+
+Check, in order:
+
+1. Supabase Auth user exists
+2. matching `profiles` row exists
+3. invitation `used_at`
+4. Vercel logs for `/signup` or `/onboarding/method`
+
+Do not delete the user before collecting evidence. User deletion does not reset
+the invitation.
+
+### Generic “This page couldn’t load”
+
+This is not enough to identify a client bug. Correlate:
+
+- route and exact timestamp
+- Vercel Function/Runtime logs
+- browser console and Network response
+- whether the error reproduces after hard navigation
+- whether it occurs only on localhost, where the dev server may have stopped
+
+Fix the underlying server/client exception; an error boundary is not a root
+cause fix.
+
+### WebAuthn fails only in production
+
+Compare:
+
+- browser origin
+- `NEXT_PUBLIC_APP_URL`
+- RP ID
+- RP origin
+- Vercel primary domain
+
+`www.university-portal.dedyn.io` and `university-portal.dedyn.io` are different
+WebAuthn RP/origin configurations.
+
+---
+
+## 15. Known gaps
+
+- No automated test suite.
+- No application-level rate limiting for password login, email OTP issuance,
+  or password reset.
+- Email OTP is issued as a render side effect on `/login/email`.
+- No self-service recovery when the sole TOTP factor is lost.
+- No invitation revoke/delete/resend UI.
+- Duplicate invitations for one email are allowed.
+- No admin user-management UI.
+- No audit-log UI.
+- Passkey UI does not manage credentials individually.
+- `loginAction` does not honor the requested `next` destination.
+- Development and production are not database-isolated.
+- Course, enrollment, assignment, and grade features are not implemented.
+
+---
+
+## 16. Change routing for agents
+
+| Requested change | Primary files |
 |---|---|
-| Add a role | `Role` type in `rbac.ts` + `profiles` check constraint (migration) |
-| Add a 2FA method | extend `MfaConfig`/`chooseDispatch` in `rbac.ts`, add a `/login/<m>` page + enroll flow, mirror the cookie in `aal-cookie.ts` if it's cookie-based |
-| Change email copy | `email.ts` (invite) and `email-otp.ts` (OTP) |
-| Theme palette | `src/styles/globals.css` HSL tokens (`:root` and `.dark`) |
-| Add an admin-only page | new dir under `(dashboard)/dashboard/admin/…`, start with `await requireRole('admin')` |
-| Add an env var | append to `.env.example` and `env.ts` (with validation if required) |
+| Role or authorization behavior | `src/lib/auth/rbac.ts`, dashboard pages, new migration |
+| Add or alter a 2FA method | `rbac.ts`, challenge/enrollment routes, Settings actions, persistence migration |
+| Invitation behavior | admin invitation Action/page, signup Action/page, `src/lib/email.ts` |
+| App-owned email templates | `src/lib/email.ts`, `src/lib/auth/email-otp.ts` |
+| Supabase recovery email | Supabase dashboard template + `src/app/auth/confirm/route.ts` |
+| Password reset behavior | forgot/reset Actions and auth confirm route |
+| TOTP behavior | onboarding/settings TOTP pages and Supabase MFA calls |
+| Passkey behavior | `src/lib/auth/webauthn.ts` and four WebAuthn API routes |
+| Session proof | `src/lib/auth/aal-cookie.ts`, `rbac.ts`, sign-out/reset paths |
+| Database shape | append a migration; do not rewrite applied migration history |
+| Production origin/domain | Vercel domain/env, deSEC DNS, Supabase URL config, WebAuthn RP config |
+| Theme/UI primitives | `src/styles/globals.css`, Tailwind config, `src/components/ui` |
 
----
+Before completing auth or deployment work:
 
-## 12. Versions (snapshot)
-
-Next.js `^16.0.0` (16.2.x), React `^19.2`, TypeScript `^5.6`, Tailwind `^3.4`,
-`@supabase/ssr` `^0.5`, `@supabase/supabase-js` `^2.108`, `@simplewebauthn/*`
-`^11`, `next-themes` `^0.4`, `resend` `^4`, `zod` `^3.23`.
-
-*End of reference.*
+1. Inspect the active code path rather than relying only on this document.
+2. Preserve unrelated user changes.
+3. Run `npm run typecheck`.
+4. Run `npm run build` when dependencies/network permit.
+5. State any required Supabase, Resend, Vercel, or DNS dashboard changes; code
+   changes alone cannot update external configuration.
+6. Update this document when architecture or invariants change.
